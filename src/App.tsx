@@ -8,6 +8,9 @@ import classroomCsv from "./seed/data/Classroom.csv?raw";
 import userProfileCsv from "./seed/data/UserProfile.csv?raw";
 import staffAssignmentCsv from "./seed/data/StaffAssignment.csv?raw";
 import userSubMapCsv from "./seed/data/UserSubMap.csv?raw";
+import abilityCodesLangCsv from "./seed/data/ability_codes_lang.csv?raw";
+import childCsv from "./seed/data/Child.csv?raw";
+import childClassroomEnrollmentCsv from "./seed/data/ChildClassroomEnrollment.csv?raw";
 import "./App.css";
 
 const rawClient = generateClient<Schema>({
@@ -44,6 +47,78 @@ type ClassroomRecord = {
   name: string;
   ageLabel?: string | null;
   fiscalYear: number;
+  status: string;
+};
+
+type AbilityCodeRecord = {
+  id: string;
+  code: string;
+  code_display: string;
+  parent_code?: string | null;
+  level: number;
+  name: string;
+  domain?: string | null;
+  category?: string | null;
+  sort_order?: number | null;
+  is_leaf: boolean;
+  status: string;
+  note?: string | null;
+};
+
+type ChildRecord = {
+  id: string;
+  tenantId: string;
+  displayName: string;
+  kana?: string | null;
+  birthDate?: string | null;
+  gender?: string | null;
+  status: string;
+};
+
+type ChildClassroomEnrollmentRecord = {
+  id: string;
+  tenantId: string;
+  childId: string;
+  classroomId: string;
+  fiscalYear: number;
+  startDate: string;
+  endDate?: string | null;
+  status: string;
+};
+
+type AbilityCodeCreateInput = {
+  id?: string;
+  code: string;
+  code_display: string;
+  parent_code?: string;
+  level: number;
+  name: string;
+  domain?: string;
+  category?: string;
+  sort_order?: number;
+  is_leaf: boolean;
+  status: string;
+  note?: string;
+};
+
+type ChildCreateInput = {
+  id?: string;
+  tenantId: string;
+  displayName: string;
+  kana?: string;
+  birthDate?: string;
+  gender?: string;
+  status: string;
+};
+
+type ChildClassroomEnrollmentCreateInput = {
+  id?: string;
+  tenantId: string;
+  childId: string;
+  classroomId: string;
+  fiscalYear: number;
+  startDate: string;
+  endDate?: string;
   status: string;
 };
 
@@ -109,6 +184,12 @@ const client = rawClient as unknown as {
     Classroom: ModelApi<ClassroomRecord, ClassroomCreateInput>;
     UserProfile: ModelApi<UserProfileRecord, UserProfileCreateInput>;
     StaffAssignment: ModelApi<StaffAssignmentRecord, StaffAssignmentCreateInput>;
+    AbilityCode: ModelApi<AbilityCodeRecord, AbilityCodeCreateInput>;
+    Child: ModelApi<ChildRecord, ChildCreateInput>;
+    ChildClassroomEnrollment: ModelApi<
+      ChildClassroomEnrollmentRecord,
+      ChildClassroomEnrollmentCreateInput
+    >;
   };
 };
 
@@ -125,8 +206,42 @@ type AppUserContext = {
 
 type SeedRow = Record<string, string>;
 
+function parseCsvLine(line: string): string[] {
+  const values: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      values.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current);
+  return values;
+}
+
 function parseCsv(text: string): SeedRow[] {
   const lines = text
+    .replace(/^\uFEFF/, "")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .split("\n")
@@ -137,10 +252,12 @@ function parseCsv(text: string): SeedRow[] {
     return [];
   }
 
-  const headers = lines[0].split(",").map((header) => header.trim());
+  const headers = parseCsvLine(lines[0]).map((header) =>
+    header.replace(/^\uFEFF/, "").trim()
+  );
 
   return lines.slice(1).map((line) => {
-    const values = line.split(",");
+    const values = parseCsvLine(line);
     const row: SeedRow = {};
 
     headers.forEach((header, index) => {
@@ -227,6 +344,46 @@ function requiredSeedNumber(
   }
 
   return parsed;
+}
+
+function optionalSeedNumber(
+  row: SeedRow,
+  key: string,
+  userSub: string,
+  username: string
+): number | undefined {
+  const value = optionalSeedValue(row[key], userSub, username);
+
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`CSV seed error: ${key} must be number. value=${value}`);
+  }
+
+  return parsed;
+}
+
+function requiredSeedBoolean(
+  row: SeedRow,
+  key: string,
+  userSub: string,
+  username: string
+): boolean {
+  const value = requiredSeedValue(row, key, userSub, username).toLowerCase();
+
+  if (["true", "1", "yes", "y"].includes(value)) {
+    return true;
+  }
+
+  if (["false", "0", "no", "n"].includes(value)) {
+    return false;
+  }
+
+  throw new Error(`CSV seed error: ${key} must be boolean. value=${value}`);
 }
 
 async function upsertModel<T, CreateInput extends Record<string, unknown>>(
@@ -339,6 +496,79 @@ async function seedStaffAssignments(userSub: string, username: string) {
   return rows.length;
 }
 
+async function seedAbilityCodes(userSub: string, username: string) {
+  const rows = parseCsv(abilityCodesLangCsv);
+
+  for (const row of rows) {
+    const code = requiredSeedValue(row, "code", userSub, username);
+    const id = optionalSeedValue(row.id, userSub, username) ?? code;
+
+    await upsertModel(client.models.AbilityCode, {
+      id,
+      code,
+      code_display:
+        optionalSeedValue(row.code_display, userSub, username) ?? code,
+      parent_code: optionalSeedValue(row.parent_code, userSub, username),
+      level: requiredSeedNumber(row, "level", userSub, username),
+      name: requiredSeedValue(row, "name", userSub, username),
+      domain: optionalSeedValue(row.domain, userSub, username),
+      category: optionalSeedValue(row.category, userSub, username),
+      sort_order: optionalSeedNumber(row, "sort_order", userSub, username),
+      is_leaf: requiredSeedBoolean(row, "is_leaf", userSub, username),
+      status:
+        optionalSeedValue(row.status, userSub, username) ?? "ACTIVE",
+      note: optionalSeedValue(row.note, userSub, username),
+    });
+  }
+
+  return rows.length;
+}
+
+async function seedChildren(userSub: string, username: string) {
+  const rows = parseCsv(childCsv);
+
+  for (const row of rows) {
+    const id =
+      optionalSeedValue(row.id, userSub, username) ??
+      requiredSeedValue(row, "childId", userSub, username);
+
+    await upsertModel(client.models.Child, {
+      id,
+      tenantId: requiredSeedValue(row, "tenantId", userSub, username),
+      displayName: requiredSeedValue(row, "displayName", userSub, username),
+      kana: optionalSeedValue(row.kana, userSub, username),
+      birthDate: optionalSeedValue(row.birthDate, userSub, username),
+      gender: optionalSeedValue(row.gender, userSub, username),
+      status: requiredSeedValue(row, "status", userSub, username),
+    });
+  }
+
+  return rows.length;
+}
+
+async function seedChildClassroomEnrollments(userSub: string, username: string) {
+  const rows = parseCsv(childClassroomEnrollmentCsv);
+
+  for (const row of rows) {
+    const id =
+      optionalSeedValue(row.id, userSub, username) ??
+      requiredSeedValue(row, "enrollmentId", userSub, username);
+
+    await upsertModel(client.models.ChildClassroomEnrollment, {
+      id,
+      tenantId: requiredSeedValue(row, "tenantId", userSub, username),
+      childId: requiredSeedValue(row, "childId", userSub, username),
+      classroomId: requiredSeedValue(row, "classroomId", userSub, username),
+      fiscalYear: requiredSeedNumber(row, "fiscalYear", userSub, username),
+      startDate: requiredSeedValue(row, "startDate", userSub, username),
+      endDate: optionalSeedValue(row.endDate, userSub, username),
+      status: requiredSeedValue(row, "status", userSub, username),
+    });
+  }
+
+  return rows.length;
+}
+
 function SignedInHome({ signOut }: { signOut?: () => void }) {
   const [status, setStatus] = useState<string>("読み込み中...");
   const [context, setContext] = useState<AppUserContext | null>(null);
@@ -432,6 +662,12 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
       const classroomCount = await seedClassrooms(userSub, username);
       const userProfileCount = await seedUserProfiles(userSub, username);
       const staffAssignmentCount = await seedStaffAssignments(userSub, username);
+      const abilityCodeCount = await seedAbilityCodes(userSub, username);
+      const childCount = await seedChildren(userSub, username);
+      const childClassroomEnrollmentCount = await seedChildClassroomEnrollments(
+        userSub,
+        username
+      );
 
       setStatus(
         [
@@ -440,6 +676,9 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
           `Classroom=${classroomCount}`,
           `UserProfile=${userProfileCount}`,
           `StaffAssignment=${staffAssignmentCount}`,
+          `AbilityCode=${abilityCodeCount}`,
+          `Child=${childCount}`,
+          `ChildClassroomEnrollment=${childClassroomEnrollmentCount}`,
         ].join(" ")
       );
 
