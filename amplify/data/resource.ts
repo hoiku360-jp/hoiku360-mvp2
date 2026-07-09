@@ -1,17 +1,63 @@
-import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
+import { a, defineData, type ClientSchema } from "@aws-amplify/backend";
 
-/*== STEP 1 ===============================================================
-The section below creates a Todo database table with a "content" field. Try
-adding a new "isDone" field as a boolean. The authorization rule below
-specifies that any unauthenticated user can "create", "read", "update", 
-and "delete" any "Todo" records.
-=========================================================================*/
+/**
+ * MVP2 Phase 0 data model.
+ *
+ * Design policy:
+ * - No hasMany / belongsTo relations yet.
+ * - No secondary indexes yet.
+ * - Use tenantId / classroomId / userId as plain ID references.
+ * - Add indexes only after real access patterns are confirmed.
+ */
+
 const schema = a.schema({
-  Todo: a
+  Tenant: a
     .model({
-      content: a.string(),
+      name: a.string().required(),
+      displayName: a.string(),
+      status: a.string().required(), // ACTIVE / INACTIVE
     })
-    .authorization((allow) => [allow.guest()]),
+    .authorization((allow) => [allow.authenticated()]),
+
+  Classroom: a
+    .model({
+      tenantId: a.id().required(),
+      name: a.string().required(),
+      ageLabel: a.string(),
+      fiscalYear: a.integer().required(),
+      status: a.string().required(), // ACTIVE / INACTIVE
+    })
+    .authorization((allow) => [allow.authenticated()]),
+
+  UserProfile: a
+    .model({
+      /**
+       * MVP2 rule:
+       * UserProfile.id should be the Cognito user sub.
+       *
+       * This avoids the MVP1 mismatch:
+       * - getUserProfile({ userId }) was invalid
+       * - getUserProfile({ id }) was required
+       */
+      userId: a.id().required(),
+      tenantId: a.id().required(),
+      displayName: a.string().required(),
+      email: a.email(),
+      role: a.string().required(), // DIRECTOR / LEAD / TEACHER / STAFF
+      status: a.string().required(), // ACTIVE / INACTIVE
+    })
+    .authorization((allow) => [allow.authenticated()]),
+
+  StaffAssignment: a
+    .model({
+      tenantId: a.id().required(),
+      userId: a.id().required(),
+      classroomId: a.id(),
+      role: a.string().required(), // DIRECTOR / LEAD / HOMEROOM / SUPPORT
+      fiscalYear: a.integer().required(),
+      status: a.string().required(), // ACTIVE / INACTIVE
+    })
+    .authorization((allow) => [allow.authenticated()]),
 });
 
 export type Schema = ClientSchema<typeof schema>;
@@ -19,35 +65,6 @@ export type Schema = ClientSchema<typeof schema>;
 export const data = defineData({
   schema,
   authorizationModes: {
-    defaultAuthorizationMode: 'identityPool',
+    defaultAuthorizationMode: "userPool",
   },
 });
-
-/*== STEP 2 ===============================================================
-Go to your frontend source code. From your client-side code, generate a
-Data client to make CRUDL requests to your table. (THIS SNIPPET WILL ONLY
-WORK IN THE FRONTEND CODE FILE.)
-
-Using JavaScript or Next.js React Server Components, Middleware, Server 
-Actions or Pages Router? Review how to generate Data clients for those use
-cases: https://docs.amplify.aws/gen2/build-a-backend/data/connect-to-API/
-=========================================================================*/
-
-/*
-"use client"
-import { generateClient } from "aws-amplify/data";
-import type { Schema } from "@/amplify/data/resource";
-
-const client = generateClient<Schema>() // use this Data client for CRUDL requests
-*/
-
-/*== STEP 3 ===============================================================
-Fetch records from the database and use them in your frontend component.
-(THIS SNIPPET WILL ONLY WORK IN THE FRONTEND CODE FILE.)
-=========================================================================*/
-
-/* For example, in a React component, you can use this snippet in your
-  function's RETURN statement */
-// const { data: todos } = await client.models.Todo.list()
-
-// return <ul>{todos.map(todo => <li key={todo.id}>{todo.content}</li>)}</ul>

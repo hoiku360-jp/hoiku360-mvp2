@@ -1,13 +1,12 @@
 import { defineBackend } from "@aws-amplify/backend";
 import { auth } from "./auth/resource";
+import { data } from "./data/resource";
 
 /**
- * MVP2 Phase 0-0:
- * Start with Auth only.
- *
- * Data models will be added after confirming that the minimal sandbox
- * can be created safely.
+ * MVP2 Phase 0:
+ * Auth + minimal tenant/classroom/user assignment data model.
  */
 defineBackend({
   auth,
+  data,
 });
