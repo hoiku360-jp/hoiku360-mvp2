@@ -59,18 +59,36 @@ const schema = a.schema({
    * Phase 1-A:
    * Child master.
    *
-   * Keep it small for now.
-   * Detailed family/contact/attendance fields will be added later only if needed.
+   * Child belongs to a tenant, not directly to a classroom.
+   * Classroom assignment is managed by ChildClassroomEnrollment.
    */
   Child: a
     .model({
       tenantId: a.id().required(),
-      classroomId: a.id().required(),
       displayName: a.string().required(),
       kana: a.string(),
       birthDate: a.date(),
       gender: a.string(),
-      status: a.string().required(), // ACTIVE / INACTIVE
+      status: a.string().required(), // ACTIVE / INACTIVE / GRADUATED / TRANSFERRED
+    })
+    .authorization((allow) => [allow.authenticated()]),
+
+  /**
+   * Phase 1-A:
+   * Fiscal-year classroom assignment for children.
+   *
+   * This separates the child identity from yearly classroom changes.
+   * A child keeps the same Child.id across fiscal years.
+   */
+  ChildClassroomEnrollment: a
+    .model({
+      tenantId: a.id().required(),
+      childId: a.id().required(),
+      classroomId: a.id().required(),
+      fiscalYear: a.integer().required(),
+      startDate: a.date().required(),
+      endDate: a.date(),
+      status: a.string().required(), // ACTIVE / INACTIVE / TRANSFERRED
     })
     .authorization((allow) => [allow.authenticated()]),
 
@@ -99,6 +117,10 @@ const schema = a.schema({
    *
    * This is the core "Do" record.
    * AI / audio / photo will be added later.
+   *
+   * Keep both childId and classroomId:
+   * - childId identifies the child.
+   * - classroomId fixes the classroom context at the time of observation.
    */
   ObservationRecord: a
     .model({
