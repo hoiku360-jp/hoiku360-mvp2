@@ -7,6 +7,7 @@ import tenantCsv from "./seed/data/Tenant.csv?raw";
 import classroomCsv from "./seed/data/Classroom.csv?raw";
 import userProfileCsv from "./seed/data/UserProfile.csv?raw";
 import staffAssignmentCsv from "./seed/data/StaffAssignment.csv?raw";
+import userSubMapCsv from "./seed/data/UserSubMap.csv?raw";
 import "./App.css";
 
 const rawClient = generateClient<Schema>({
@@ -27,6 +28,7 @@ type ModelApi<T, CreateInput extends Record<string, unknown>> = {
   get(args: { id: string }): ModelGetResult<T>;
   list(args?: { filter?: Record<string, unknown> }): ModelListResult<T>;
   create(input: CreateInput): ModelGetResult<T>;
+  update(input: CreateInput & { id: string }): ModelGetResult<T>;
 };
 
 type TenantRecord = {
@@ -149,8 +151,40 @@ function parseCsv(text: string): SeedRow[] {
   });
 }
 
+function buildUserSubMap(): Map<string, string> {
+  const map = new Map<string, string>();
+  const rows = parseCsv(userSubMapCsv);
+
+  for (const row of rows) {
+    const oldUserId = String(row.oldUserId ?? "").trim();
+    const newUserId = String(row.newUserId ?? "").trim();
+
+    if (!oldUserId || !newUserId) {
+      continue;
+    }
+
+    map.set(oldUserId, newUserId);
+  }
+
+  return map;
+}
+
+function applyUserSubMap(value: string | undefined): string {
+  const raw = String(value ?? "");
+  if (!raw) return raw;
+
+  const map = buildUserSubMap();
+  let replaced = raw;
+
+  for (const [oldUserId, newUserId] of map.entries()) {
+    replaced = replaced.replaceAll(oldUserId, newUserId);
+  }
+
+  return replaced;
+}
+
 function resolveSeedValue(value: string | undefined, userSub: string, username: string): string {
-  return (value ?? "")
+  return applyUserSubMap(value)
     .replaceAll("CURRENT_USER", userSub)
     .replaceAll("CURRENT_USERNAME", username);
 }
@@ -195,21 +229,34 @@ function requiredSeedNumber(
   return parsed;
 }
 
+async function upsertModel<T, CreateInput extends Record<string, unknown>>(
+  model: ModelApi<T, CreateInput>,
+  input: CreateInput & { id: string }
+): ModelGetResult<T> {
+  const existing = await model.get({ id: input.id });
+
+  if (existing.data) {
+    return model.update(input);
+  }
+
+  return model.create(input);
+}
+
 async function seedTenants(userSub: string, username: string) {
   const rows = parseCsv(tenantCsv);
 
   for (const row of rows) {
-    const id = requiredSeedValue(row, "id", userSub, username);
-    const existing = await client.models.Tenant.get({ id });
+    const id =
+      optionalSeedValue(row.id, userSub, username) ??
+      requiredSeedValue(row, "tenantId", userSub, username);
 
-    if (existing.data) {
-      continue;
-    }
-
-    await client.models.Tenant.create({
+    await upsertModel(client.models.Tenant, {
       id,
       name: requiredSeedValue(row, "name", userSub, username),
-      displayName: optionalSeedValue(row.displayName, userSub, username),
+      displayName:
+        optionalSeedValue(row.displayName, userSub, username) ??
+        optionalSeedValue(row.legalName, userSub, username) ??
+        optionalSeedValue(row.name, userSub, username),
       status: requiredSeedValue(row, "status", userSub, username),
     });
   }
@@ -221,19 +268,20 @@ async function seedClassrooms(userSub: string, username: string) {
   const rows = parseCsv(classroomCsv);
 
   for (const row of rows) {
-    const id = requiredSeedValue(row, "id", userSub, username);
-    const existing = await client.models.Classroom.get({ id });
+    const id =
+      optionalSeedValue(row.id, userSub, username) ??
+      requiredSeedValue(row, "classroomId", userSub, username);
 
-    if (existing.data) {
-      continue;
-    }
-
-    await client.models.Classroom.create({
+    await upsertModel(client.models.Classroom, {
       id,
       tenantId: requiredSeedValue(row, "tenantId", userSub, username),
       name: requiredSeedValue(row, "name", userSub, username),
-      ageLabel: optionalSeedValue(row.ageLabel, userSub, username),
-      fiscalYear: requiredSeedNumber(row, "fiscalYear", userSub, username),
+      ageLabel:
+        optionalSeedValue(row.ageLabel, userSub, username) ??
+        optionalSeedValue(row.ageBand, userSub, username),
+      fiscalYear: optionalSeedValue(row.fiscalYear, userSub, username)
+        ? requiredSeedNumber(row, "fiscalYear", userSub, username)
+        : 2026,
       status: requiredSeedValue(row, "status", userSub, username),
     });
   }
@@ -245,22 +293,21 @@ async function seedUserProfiles(userSub: string, username: string) {
   const rows = parseCsv(userProfileCsv);
 
   for (const row of rows) {
-    const id = requiredSeedValue(row, "id", userSub, username);
-    const existing = await client.models.UserProfile.get({ id });
-
-    if (existing.data) {
-      continue;
-    }
+    const id =
+      optionalSeedValue(row.id, userSub, username) ??
+      requiredSeedValue(row, "userId", userSub, username);
 
     const email =
       optionalSeedValue(row.email, userSub, username) ??
       (username.includes("@") ? username : undefined);
 
-    await client.models.UserProfile.create({
+    await upsertModel(client.models.UserProfile, {
       id,
       userId: requiredSeedValue(row, "userId", userSub, username),
       tenantId: requiredSeedValue(row, "tenantId", userSub, username),
-      displayName: requiredSeedValue(row, "displayName", userSub, username),
+      displayName:
+        optionalSeedValue(row.displayName, userSub, username) ??
+        requiredSeedValue(row, "fullName", userSub, username),
       email,
       role: requiredSeedValue(row, "role", userSub, username),
       status: requiredSeedValue(row, "status", userSub, username),
@@ -274,14 +321,11 @@ async function seedStaffAssignments(userSub: string, username: string) {
   const rows = parseCsv(staffAssignmentCsv);
 
   for (const row of rows) {
-    const id = requiredSeedValue(row, "id", userSub, username);
-    const existing = await client.models.StaffAssignment.get({ id });
+    const id =
+      optionalSeedValue(row.id, userSub, username) ??
+      requiredSeedValue(row, "assignmentId", userSub, username);
 
-    if (existing.data) {
-      continue;
-    }
-
-    await client.models.StaffAssignment.create({
+    await upsertModel(client.models.StaffAssignment, {
       id,
       tenantId: requiredSeedValue(row, "tenantId", userSub, username),
       userId: requiredSeedValue(row, "userId", userSub, username),

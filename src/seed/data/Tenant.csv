@@ -1,2 +1,3 @@
-id,name,displayName,status
-vehicle-nursery,vehicle-nursery,ビークル保育園,ACTIVE
+﻿tenantId,name,legalName,status,plan,note
+demo-tenant,保育360デモ園,保育360デモ園,ACTIVE,MVP,既存デモ用テナント
+vehicle-nursery,ビークル保育園,ビークル保育園,ACTIVE,MVP,複数テナント試験用

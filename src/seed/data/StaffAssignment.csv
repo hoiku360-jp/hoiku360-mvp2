@@ -1,2 +1,8 @@
-id,tenantId,userId,classroomId,role,fiscalYear,status
-CURRENT_USER-director-2026,vehicle-nursery,CURRENT_USER,,DIRECTOR,2026,ACTIVE
+﻿assignmentId,tenantId,userId,scopeType,classroomId,role,fiscalYear,startDate,endDate,isPrimary,status,note
+assign-2026-demo-director,demo-tenant,d724da28-c051-709a-2230-a75c4d048b8b,SCHOOL,,DIRECTOR,2026,2026-04-01,,TRUE,ACTIVE,園長は園全体
+assign-2026-demo-teacher-sakura,demo-tenant,97e40ad8-3071-7070-0abb-7986b6c60504,CLASSROOM,classroom-demo-sakura,TEACHER,2026,2026-04-01,,TRUE,ACTIVE,2026年度さくら組担任
+assign-2027-demo-teacher-sumire,demo-tenant,97e40ad8-3071-7070-0abb-7986b6c60504,CLASSROOM,classroom-demo-sumire,TEACHER,2027,2027-04-01,,TRUE,ACTIVE,2027年度すみれ組担任
+assign-2026-demo-teacher-sumire,demo-tenant,a714aa08-b091-70b6-a763-5d02eb327145,CLASSROOM,classroom-demo-sumire,TEACHER,2026,2026-04-01,,TRUE,ACTIVE,2026年度すみれ組担任
+assign-2026-vehicle-director,vehicle-nursery,d7043a98-e051-704e-6257-2c76ec53109b,SCHOOL,,DIRECTOR,2026,2026-04-01,,TRUE,ACTIVE,園長は園全体
+assign-2026-vehicle-teacher-sakura,vehicle-nursery,d7b46a88-7031-70e8-0346-a471c4ca3794,CLASSROOM,classroom-vehicle-sakura,TEACHER,2026,2026-04-01,,TRUE,ACTIVE,2026年度さくら組担任
+assign-2026-vehicle-teacher-asagao,vehicle-nursery,5744ca58-e061-707a-01dc-a41d00065869,CLASSROOM,classroom-vehicle-asagao,TEACHER,2026,2026-04-01,,TRUE,ACTIVE,2026年度あさがお組担任

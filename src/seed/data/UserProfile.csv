@@ -1,2 +1,7 @@
-id,userId,tenantId,displayName,email,role,status
-CURRENT_USER,CURRENT_USER,vehicle-nursery,CURRENT_USERNAME,,DIRECTOR,ACTIVE
+﻿userId,tenantId,fullName,displayName,phoneticName,email,role,status,department,position,profileVisibility,practiceDefaultVisibility,owner
+d724da28-c051-709a-2230-a75c4d048b8b,demo-tenant,山田 園長,山田園長,ヤマダ エンチョウ,noreply-test02@hoiku360.jp,DIRECTOR,ACTIVE,園全体,園長,TENANT,TENANT,d724da28-c051-709a-2230-a75c4d048b8b
+97e40ad8-3071-7070-0abb-7986b6c60504,demo-tenant,田中 先生,田中先生,タナカ センセイ,noreply-test05@hoiku360.jp,TEACHER,ACTIVE,さくら組,担任,TENANT,TENANT,97e40ad8-3071-7070-0abb-7986b6c60504
+a714aa08-b091-70b6-a763-5d02eb327145,demo-tenant,佐藤 先生,佐藤先生,サトウ センセイ,noreply-test06@hoiku360.jp,TEACHER,ACTIVE,すみれ組,担任,TENANT,TENANT,a714aa08-b091-70b6-a763-5d02eb327145
+d7043a98-e051-704e-6257-2c76ec53109b,vehicle-nursery,竹田 園長,竹田園長,タケダ エンチョウ,noreply-test07@hoiku360.jp,DIRECTOR,ACTIVE,園全体,園長,TENANT,TENANT,d7043a98-e051-704e-6257-2c76ec53109b
+d7b46a88-7031-70e8-0346-a471c4ca3794,vehicle-nursery,中村 先生,中村先生,ナカムラ センセイ,noreply-test08@hoiku360.jp,TEACHER,ACTIVE,さくら組,担任,TENANT,TENANT,d7b46a88-7031-70e8-0346-a471c4ca3794
+5744ca58-e061-707a-01dc-a41d00065869,vehicle-nursery,安藤 先生,安藤先生,アンドウ センセイ,noreply-test09@hoiku360.jp,TEACHER,ACTIVE,あさがお組,担任,TENANT,TENANT,5744ca58-e061-707a-01dc-a41d00065869

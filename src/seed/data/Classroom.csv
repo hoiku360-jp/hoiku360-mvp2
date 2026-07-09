@@ -1,3 +1,7 @@
-id,tenantId,name,ageLabel,fiscalYear,status
-sakura-2026,vehicle-nursery,さくら組,3歳児,2026,ACTIVE
-sumire-2026,vehicle-nursery,すみれ組,4歳児,2026,ACTIVE
+﻿tenantId,classroomId,name,ageBand,schoolName,status
+demo-tenant,classroom-demo-asagao,あさがお組,3歳児,保育360デモ園,ACTIVE
+demo-tenant,classroom-demo-sumire,すみれ組,4歳児,保育360デモ園,ACTIVE
+demo-tenant,classroom-demo-sakura,さくら組,5歳児,保育360デモ園,ACTIVE
+vehicle-nursery,classroom-vehicle-asagao,あさがお組,3歳児,ビークル保育園,ACTIVE
+vehicle-nursery,classroom-vehicle-sakura,さくら組,4歳児,ビークル保育園,ACTIVE
+vehicle-nursery,classroom-vehicle-tsubaki,つばき組,5歳児,ビークル保育園,ACTIVE
