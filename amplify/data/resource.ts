@@ -104,10 +104,16 @@ const schema = a.schema({
   AbilityCode: a
     .model({
       code: a.string().required(),
-      domain: a.string().required(), // 健康 / 人間関係 / 環境 / 言葉 / 表現
+      code_display: a.string().required(),
+      parent_code: a.string(),
+      level: a.integer().required(),
       name: a.string().required(),
-      description: a.string(),
-      status: a.string().required(), // ACTIVE / INACTIVE
+      domain: a.string(),
+      category: a.string(),
+      sort_order: a.integer(),
+      is_leaf: a.boolean().required(),
+      status: a.string().required(),
+      note: a.string(),
     })
     .authorization((allow) => [allow.authenticated()]),
 
