@@ -17,6 +17,8 @@ const rawClient = generateClient<Schema>({
   authMode: "userPool",
 });
 
+const CURRENT_FISCAL_YEAR = 2026;
+
 type ModelGetResult<T> = Promise<{
   data: T | null;
   errors?: unknown[];
@@ -202,6 +204,26 @@ type AppUserContext = {
   role: string | null;
   classroomIds: string[];
   classroomNames: string[];
+};
+
+type SeedSummary = {
+  tenantCount: number;
+  classroomCount: number;
+  userProfileCount: number;
+  staffAssignmentCount: number;
+  abilityCodeCount: number;
+  childCount: number;
+  childClassroomEnrollmentCount: number;
+};
+
+type ClassroomChildSummary = {
+  classroomId: string;
+  classroomName: string;
+  children: Array<{
+    id: string;
+    displayName: string;
+    kana?: string | null;
+  }>;
 };
 
 type SeedRow = Record<string, string>;
@@ -399,6 +421,29 @@ async function upsertModel<T, CreateInput extends Record<string, unknown>>(
   return model.create(input);
 }
 
+async function deactivateClassroomIfExists(id: string) {
+  const existing = await client.models.Classroom.get({ id });
+  const classroom = existing.data;
+
+  if (!classroom || classroom.status === "INACTIVE") {
+    return;
+  }
+
+  await client.models.Classroom.update({
+    id: classroom.id,
+    tenantId: classroom.tenantId,
+    name: classroom.name,
+    ageLabel: classroom.ageLabel ?? undefined,
+    fiscalYear: classroom.fiscalYear,
+    status: "INACTIVE",
+  });
+}
+
+async function cleanupLegacyBootstrapData() {
+  await deactivateClassroomIfExists("sakura-2026");
+  await deactivateClassroomIfExists("sumire-2026");
+}
+
 async function seedTenants(userSub: string, username: string) {
   const rows = parseCsv(tenantCsv);
 
@@ -573,6 +618,8 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
   const [status, setStatus] = useState<string>("読み込み中...");
   const [context, setContext] = useState<AppUserContext | null>(null);
   const [isWorking, setIsWorking] = useState(false);
+  const [seedSummary, setSeedSummary] = useState<SeedSummary | null>(null);
+  const [classroomChildren, setClassroomChildren] = useState<ClassroomChildSummary[]>([]);
 
   const contextLabel = useMemo(() => {
     if (!context) return "未取得";
@@ -585,6 +632,67 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
       }`,
     ].join(" / ");
   }, [context]);
+
+  async function loadClassroomChildren(
+    tenantId: string,
+    scopedClassroomIds: string[]
+  ) {
+    const classroomRes = await client.models.Classroom.list({
+      filter: {
+        tenantId: { eq: tenantId },
+        fiscalYear: { eq: CURRENT_FISCAL_YEAR },
+        status: { eq: "ACTIVE" },
+      },
+    });
+
+    const allClassrooms = (classroomRes.data ?? []).sort((a, b) =>
+      a.name.localeCompare(b.name, "ja")
+    );
+
+    const targetClassrooms =
+      scopedClassroomIds.length > 0
+        ? allClassrooms.filter((classroom) => scopedClassroomIds.includes(classroom.id))
+        : allClassrooms;
+
+    const summaries: ClassroomChildSummary[] = [];
+
+    for (const classroom of targetClassrooms) {
+      const enrollmentRes = await client.models.ChildClassroomEnrollment.list({
+        filter: {
+          tenantId: { eq: tenantId },
+          classroomId: { eq: classroom.id },
+          fiscalYear: { eq: CURRENT_FISCAL_YEAR },
+          status: { eq: "ACTIVE" },
+        },
+      });
+
+      const enrollments = enrollmentRes.data ?? [];
+      const children: ClassroomChildSummary["children"] = [];
+
+      for (const enrollment of enrollments) {
+        const childRes = await client.models.Child.get({ id: enrollment.childId });
+        const child = childRes.data;
+
+        if (child?.status === "ACTIVE") {
+          children.push({
+            id: child.id,
+            displayName: child.displayName,
+            kana: child.kana,
+          });
+        }
+      }
+
+      children.sort((a, b) => a.displayName.localeCompare(b.displayName, "ja"));
+
+      summaries.push({
+        classroomId: classroom.id,
+        classroomName: classroom.name,
+        children,
+      });
+    }
+
+    setClassroomChildren(summaries);
+  }
 
   async function loadContext() {
     setStatus("ユーザー情報を取得中...");
@@ -617,6 +725,7 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
       filter: {
         userId: { eq: userSub },
         tenantId: { eq: profile.tenantId },
+        fiscalYear: { eq: CURRENT_FISCAL_YEAR },
         status: { eq: "ACTIVE" },
       },
     });
@@ -646,6 +755,8 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
       classroomNames,
     });
 
+    await loadClassroomChildren(profile.tenantId, classroomIds);
+
     setStatus("所属コンテキストを取得しました。");
   }
 
@@ -658,6 +769,8 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
       const userSub = user.userId;
       const username = user.username || "MVP2テストユーザー";
 
+      await cleanupLegacyBootstrapData();
+
       const tenantCount = await seedTenants(userSub, username);
       const classroomCount = await seedClassrooms(userSub, username);
       const userProfileCount = await seedUserProfiles(userSub, username);
@@ -668,6 +781,18 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
         userSub,
         username
       );
+
+      setSeedSummary({
+        tenantCount,
+        classroomCount,
+        userProfileCount,
+        staffAssignmentCount,
+        abilityCodeCount,
+        childCount,
+        childClassroomEnrollmentCount,
+      });
+
+      await loadContext();
 
       setStatus(
         [
@@ -682,7 +807,6 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
         ].join(" ")
       );
 
-      await loadContext();
     } catch (error) {
       console.error(error);
       setStatus(`CSV seedでエラーが発生しました: ${String(error)}`);
@@ -733,6 +857,65 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
           </button>
         </div>
       </section>
+
+      {seedSummary && (
+        <section className="panel">
+          <h2>直近のCSV seed結果</h2>
+          <dl className="detail-grid">
+            <dt>Tenant</dt>
+            <dd>{seedSummary.tenantCount}</dd>
+
+            <dt>Classroom</dt>
+            <dd>{seedSummary.classroomCount}</dd>
+
+            <dt>UserProfile</dt>
+            <dd>{seedSummary.userProfileCount}</dd>
+
+            <dt>StaffAssignment</dt>
+            <dd>{seedSummary.staffAssignmentCount}</dd>
+
+            <dt>AbilityCode</dt>
+            <dd>{seedSummary.abilityCodeCount}</dd>
+
+            <dt>Child</dt>
+            <dd>{seedSummary.childCount}</dd>
+
+            <dt>ChildClassroomEnrollment</dt>
+            <dd>{seedSummary.childClassroomEnrollmentCount}</dd>
+          </dl>
+        </section>
+      )}
+
+      {classroomChildren.length > 0 && (
+        <section className="panel">
+          <h2>子ども一覧</h2>
+          <p className="muted">
+            ログイン中ユーザーの tenant / classroom scope に基づいて表示しています。
+          </p>
+
+          <div className="classroom-child-list">
+            {classroomChildren.map((classroom) => (
+              <div className="classroom-child-card" key={classroom.classroomId}>
+                <h3>{classroom.classroomName}</h3>
+
+                {classroom.children.length > 0 ? (
+                  <ul>
+                    {classroom.children.map((child) => (
+                      <li key={child.id}>
+                        <strong>{child.displayName}</strong>
+                        {child.kana ? <span>（{child.kana}）</span> : null}
+                        <small>{child.id}</small>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted">このクラスの子どもは未登録です。</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {context && (
         <section className="panel">
