@@ -1,0 +1,2 @@
+id,userId,tenantId,displayName,email,role,status
+CURRENT_USER,CURRENT_USER,vehicle-nursery,CURRENT_USERNAME,,DIRECTOR,ACTIVE

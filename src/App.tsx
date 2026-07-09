@@ -3,9 +3,15 @@ import { Authenticator } from "@aws-amplify/ui-react";
 import { getCurrentUser } from "aws-amplify/auth";
 import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../amplify/data/resource";
+import tenantCsv from "./seed/data/Tenant.csv?raw";
+import classroomCsv from "./seed/data/Classroom.csv?raw";
+import userProfileCsv from "./seed/data/UserProfile.csv?raw";
+import staffAssignmentCsv from "./seed/data/StaffAssignment.csv?raw";
 import "./App.css";
 
-const rawClient = generateClient<Schema>();
+const rawClient = generateClient<Schema>({
+  authMode: "userPool",
+});
 
 type ModelGetResult<T> = Promise<{
   data: T | null;
@@ -115,9 +121,179 @@ type AppUserContext = {
   classroomNames: string[];
 };
 
-const DEMO_TENANT_ID = "vehicle-nursery";
-const DEMO_CLASSROOM_SAKURA_ID = "sakura-2026";
-const DEMO_CLASSROOM_SUMIRE_ID = "sumire-2026";
+type SeedRow = Record<string, string>;
+
+function parseCsv(text: string): SeedRow[] {
+  const lines = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+
+  if (lines.length === 0) {
+    return [];
+  }
+
+  const headers = lines[0].split(",").map((header) => header.trim());
+
+  return lines.slice(1).map((line) => {
+    const values = line.split(",");
+    const row: SeedRow = {};
+
+    headers.forEach((header, index) => {
+      row[header] = (values[index] ?? "").trim();
+    });
+
+    return row;
+  });
+}
+
+function resolveSeedValue(value: string | undefined, userSub: string, username: string): string {
+  return (value ?? "")
+    .replaceAll("CURRENT_USER", userSub)
+    .replaceAll("CURRENT_USERNAME", username);
+}
+
+function optionalSeedValue(
+  value: string | undefined,
+  userSub: string,
+  username: string
+): string | undefined {
+  const resolved = resolveSeedValue(value, userSub, username);
+  return resolved.length > 0 ? resolved : undefined;
+}
+
+function requiredSeedValue(
+  row: SeedRow,
+  key: string,
+  userSub: string,
+  username: string
+): string {
+  const value = optionalSeedValue(row[key], userSub, username);
+
+  if (!value) {
+    throw new Error(`CSV seed error: ${key} is required.`);
+  }
+
+  return value;
+}
+
+function requiredSeedNumber(
+  row: SeedRow,
+  key: string,
+  userSub: string,
+  username: string
+): number {
+  const value = requiredSeedValue(row, key, userSub, username);
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`CSV seed error: ${key} must be number. value=${value}`);
+  }
+
+  return parsed;
+}
+
+async function seedTenants(userSub: string, username: string) {
+  const rows = parseCsv(tenantCsv);
+
+  for (const row of rows) {
+    const id = requiredSeedValue(row, "id", userSub, username);
+    const existing = await client.models.Tenant.get({ id });
+
+    if (existing.data) {
+      continue;
+    }
+
+    await client.models.Tenant.create({
+      id,
+      name: requiredSeedValue(row, "name", userSub, username),
+      displayName: optionalSeedValue(row.displayName, userSub, username),
+      status: requiredSeedValue(row, "status", userSub, username),
+    });
+  }
+
+  return rows.length;
+}
+
+async function seedClassrooms(userSub: string, username: string) {
+  const rows = parseCsv(classroomCsv);
+
+  for (const row of rows) {
+    const id = requiredSeedValue(row, "id", userSub, username);
+    const existing = await client.models.Classroom.get({ id });
+
+    if (existing.data) {
+      continue;
+    }
+
+    await client.models.Classroom.create({
+      id,
+      tenantId: requiredSeedValue(row, "tenantId", userSub, username),
+      name: requiredSeedValue(row, "name", userSub, username),
+      ageLabel: optionalSeedValue(row.ageLabel, userSub, username),
+      fiscalYear: requiredSeedNumber(row, "fiscalYear", userSub, username),
+      status: requiredSeedValue(row, "status", userSub, username),
+    });
+  }
+
+  return rows.length;
+}
+
+async function seedUserProfiles(userSub: string, username: string) {
+  const rows = parseCsv(userProfileCsv);
+
+  for (const row of rows) {
+    const id = requiredSeedValue(row, "id", userSub, username);
+    const existing = await client.models.UserProfile.get({ id });
+
+    if (existing.data) {
+      continue;
+    }
+
+    const email =
+      optionalSeedValue(row.email, userSub, username) ??
+      (username.includes("@") ? username : undefined);
+
+    await client.models.UserProfile.create({
+      id,
+      userId: requiredSeedValue(row, "userId", userSub, username),
+      tenantId: requiredSeedValue(row, "tenantId", userSub, username),
+      displayName: requiredSeedValue(row, "displayName", userSub, username),
+      email,
+      role: requiredSeedValue(row, "role", userSub, username),
+      status: requiredSeedValue(row, "status", userSub, username),
+    });
+  }
+
+  return rows.length;
+}
+
+async function seedStaffAssignments(userSub: string, username: string) {
+  const rows = parseCsv(staffAssignmentCsv);
+
+  for (const row of rows) {
+    const id = requiredSeedValue(row, "id", userSub, username);
+    const existing = await client.models.StaffAssignment.get({ id });
+
+    if (existing.data) {
+      continue;
+    }
+
+    await client.models.StaffAssignment.create({
+      id,
+      tenantId: requiredSeedValue(row, "tenantId", userSub, username),
+      userId: requiredSeedValue(row, "userId", userSub, username),
+      classroomId: optionalSeedValue(row.classroomId, userSub, username),
+      role: requiredSeedValue(row, "role", userSub, username),
+      fiscalYear: requiredSeedNumber(row, "fiscalYear", userSub, username),
+      status: requiredSeedValue(row, "status", userSub, username),
+    });
+  }
+
+  return rows.length;
+}
 
 function SignedInHome({ signOut }: { signOut?: () => void }) {
   const [status, setStatus] = useState<string>("読み込み中...");
@@ -130,7 +306,9 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
       `userSub=${context.userSub}`,
       `tenant=${context.tenantName ?? context.tenantId ?? "-"}`,
       `role=${context.role ?? "-"}`,
-      `classrooms=${context.classroomNames.length > 0 ? context.classroomNames.join(", ") : "園全体"}`,
+      `classrooms=${
+        context.classroomNames.length > 0 ? context.classroomNames.join(", ") : "園全体"
+      }`,
     ].join(" / ");
   }, [context]);
 
@@ -154,7 +332,7 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
         classroomIds: [],
         classroomNames: [],
       });
-      setStatus("UserProfile が未作成です。下のボタンで初期データを作成してください。");
+      setStatus("UserProfile が未作成です。下のボタンでCSV seedを実行してください。");
       return;
     }
 
@@ -197,87 +375,34 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
     setStatus("所属コンテキストを取得しました。");
   }
 
-  async function bootstrapCurrentUser() {
+  async function runCsvSeed() {
     setIsWorking(true);
-    setStatus("初期データを作成中...");
+    setStatus("CSV seedを実行中...");
 
     try {
       const user = await getCurrentUser();
       const userSub = user.userId;
+      const username = user.username || "MVP2テストユーザー";
 
-      const nowDisplayName = user.username || "MVP2テストユーザー";
+      const tenantCount = await seedTenants(userSub, username);
+      const classroomCount = await seedClassrooms(userSub, username);
+      const userProfileCount = await seedUserProfiles(userSub, username);
+      const staffAssignmentCount = await seedStaffAssignments(userSub, username);
 
-      const existingTenant = await client.models.Tenant.get({ id: DEMO_TENANT_ID });
-      if (!existingTenant.data) {
-        await client.models.Tenant.create({
-          id: DEMO_TENANT_ID,
-          name: "vehicle-nursery",
-          displayName: "ビークル保育園",
-          status: "ACTIVE",
-        });
-      }
+      setStatus(
+        [
+          "CSV seedを実行しました。",
+          `Tenant=${tenantCount}`,
+          `Classroom=${classroomCount}`,
+          `UserProfile=${userProfileCount}`,
+          `StaffAssignment=${staffAssignmentCount}`,
+        ].join(" ")
+      );
 
-      const existingSakura = await client.models.Classroom.get({
-        id: DEMO_CLASSROOM_SAKURA_ID,
-      });
-      if (!existingSakura.data) {
-        await client.models.Classroom.create({
-          id: DEMO_CLASSROOM_SAKURA_ID,
-          tenantId: DEMO_TENANT_ID,
-          name: "さくら組",
-          ageLabel: "3歳児",
-          fiscalYear: 2026,
-          status: "ACTIVE",
-        });
-      }
-
-      const existingSumire = await client.models.Classroom.get({
-        id: DEMO_CLASSROOM_SUMIRE_ID,
-      });
-      if (!existingSumire.data) {
-        await client.models.Classroom.create({
-          id: DEMO_CLASSROOM_SUMIRE_ID,
-          tenantId: DEMO_TENANT_ID,
-          name: "すみれ組",
-          ageLabel: "4歳児",
-          fiscalYear: 2026,
-          status: "ACTIVE",
-        });
-      }
-
-      const existingProfile = await client.models.UserProfile.get({ id: userSub });
-      if (!existingProfile.data) {
-        await client.models.UserProfile.create({
-          id: userSub,
-          userId: userSub,
-          tenantId: DEMO_TENANT_ID,
-          displayName: nowDisplayName,
-          role: "DIRECTOR",
-          status: "ACTIVE",
-        });
-      }
-
-      const assignmentId = `${userSub}-director-2026`;
-      const existingAssignment = await client.models.StaffAssignment.get({
-        id: assignmentId,
-      });
-      if (!existingAssignment.data) {
-        await client.models.StaffAssignment.create({
-          id: assignmentId,
-          tenantId: DEMO_TENANT_ID,
-          userId: userSub,
-          classroomId: undefined,
-          role: "DIRECTOR",
-          fiscalYear: 2026,
-          status: "ACTIVE",
-        });
-      }
-
-      setStatus("初期データを作成しました。所属コンテキストを再取得します。");
       await loadContext();
     } catch (error) {
       console.error(error);
-      setStatus(`初期データ作成でエラーが発生しました: ${String(error)}`);
+      setStatus(`CSV seedでエラーが発生しました: ${String(error)}`);
     } finally {
       setIsWorking(false);
     }
@@ -297,7 +422,8 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
           <p className="eyebrow">Hoiku360 MVP2</p>
           <h1>Phase 0：園・ユーザー・担当コンテキスト確認</h1>
           <p className="lead">
-            まずはログインユーザーの tenant / role / classroom scope を取得できることを確認します。
+            CSV seedから Tenant / Classroom / UserProfile / StaffAssignment を作成し、
+            ログインユーザーの tenant / role / classroom scope を確認します。
           </p>
         </div>
 
@@ -319,8 +445,8 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
           <button onClick={() => loadContext()} disabled={isWorking}>
             再読み込み
           </button>
-          <button onClick={() => bootstrapCurrentUser()} disabled={isWorking}>
-            初期データを作成
+          <button onClick={() => runCsvSeed()} disabled={isWorking}>
+            CSV seedを実行
           </button>
         </div>
       </section>
