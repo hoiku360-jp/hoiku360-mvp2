@@ -11,6 +11,8 @@ import userSubMapCsv from "./seed/data/UserSubMap.csv?raw";
 import abilityCodesLangCsv from "./seed/data/ability_codes_lang.csv?raw";
 import childCsv from "./seed/data/Child.csv?raw";
 import childClassroomEnrollmentCsv from "./seed/data/ChildClassroomEnrollment.csv?raw";
+import PracticeRegisterPanel from "./features/practice-register/PracticeRegisterPanel";
+import PracticeSearchPanel from "./features/practice/PracticeSearchPanel";
 import "./App.css";
 
 const rawClient = generateClient<Schema>({
@@ -205,6 +207,8 @@ type AppUserContext = {
   classroomIds: string[];
   classroomNames: string[];
 };
+
+type TabKey = "home" | "practiceRegister" | "practiceSearch";
 
 type SeedSummary = {
   tenantCount: number;
@@ -615,6 +619,7 @@ async function seedChildClassroomEnrollments(userSub: string, username: string) 
 }
 
 function SignedInHome({ signOut }: { signOut?: () => void }) {
+  const [tab, setTab] = useState<TabKey>("home");
   const [status, setStatus] = useState<string>("読み込み中...");
   const [context, setContext] = useState<AppUserContext | null>(null);
   const [isWorking, setIsWorking] = useState(false);
@@ -632,6 +637,11 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
       }`,
     ].join(" / ");
   }, [context]);
+
+  const practiceOwner = context?.userSub ?? "unknown-owner";
+  const practiceTenantId = context?.tenantId ?? "";
+  const currentClassroomId = context?.classroomIds[0] ?? null;
+  const isSchoolScope = (context?.classroomIds.length ?? 0) === 0;
 
   async function loadClassroomChildren(
     tenantId: string,
@@ -857,6 +867,62 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
           </button>
         </div>
       </section>
+
+      <section className="panel">
+        <h2>画面</h2>
+        <div className="button-row">
+          <button
+            type="button"
+            onClick={() => setTab("home")}
+            disabled={tab === "home"}
+          >
+            ホーム
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTab("practiceRegister")}
+            disabled={!context?.tenantId || tab === "practiceRegister"}
+          >
+            Practice登録
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTab("practiceSearch")}
+            disabled={!context?.tenantId || tab === "practiceSearch"}
+          >
+            Practice検索 / 一覧
+          </button>
+        </div>
+
+        {!context?.tenantId && (
+          <p className="muted">
+            Practice機能を使うには、先にCSV seedを実行して UserProfile / tenantId を作成してください。
+          </p>
+        )}
+      </section>
+
+      {tab === "practiceRegister" && context?.tenantId && (
+        <section className="panel">
+          <PracticeRegisterPanel
+            owner={practiceOwner}
+            tenantId={practiceTenantId}
+          />
+        </section>
+      )}
+
+      {tab === "practiceSearch" && context?.tenantId && (
+        <section className="panel">
+          <PracticeSearchPanel
+            owner={practiceOwner}
+            tenantId={practiceTenantId}
+            currentClassroomId={currentClassroomId}
+            allowedClassroomIds={context.classroomIds}
+            isSchoolScope={isSchoolScope}
+          />
+        </section>
+      )}
 
       {seedSummary && (
         <section className="panel">

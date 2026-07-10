@@ -1,4 +1,9 @@
-import { a, defineData, type ClientSchema } from "@aws-amplify/backend";
+import {
+  a,
+  defineData,
+  defineFunction,
+  type ClientSchema,
+} from "@aws-amplify/backend";
 
 /**
  * MVP2 data model.
@@ -9,6 +14,47 @@ import { a, defineData, type ClientSchema } from "@aws-amplify/backend";
  * - Use tenantId / classroomId / childId / userId as plain ID references.
  * - Add indexes only after real access patterns are confirmed.
  */
+
+export const cleanupTranscriptTextFn = defineFunction({
+  name: "cleanup-transcript-text",
+  entry: "../functions/cleanup-transcript-text/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 512,
+  runtime: 22,
+  environment: {
+    BEDROCK_MODEL_ID: "jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  },
+});
+
+export const analyzePracticeFn = defineFunction({
+  name: "analyze-practice",
+  entry: "../functions/practice-analyze/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 512,
+  runtime: 22,
+  environment: {
+    BEDROCK_MODEL_ID: "jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  },
+});
+
+export const suggestPracticeLinksFn = defineFunction({
+  name: "suggest-practice-links",
+  entry: "../functions/practice-link-suggest/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 512,
+  runtime: 22,
+  environment: {
+    BEDROCK_MODEL_ID: "jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  },
+});
+
+export const registerPracticeLinksFn = defineFunction({
+  name: "register-practice-links",
+  entry: "../functions/practice-link-register/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 512,
+  runtime: 22,
+});
 
 const schema = a.schema({
   Tenant: a
@@ -101,6 +147,7 @@ const schema = a.schema({
    *   id = "HEALTH_001"
    *   code = "HEALTH_001"
    */
+   
   AbilityCode: a
     .model({
       code: a.string().required(),
@@ -117,7 +164,190 @@ const schema = a.schema({
     })
     .authorization((allow) => [allow.authenticated()]),
 
-  /**
+  CleanupTranscriptTextResponse: a.customType({
+    originalText: a.string().required(),
+    cleanedText: a.string().required(),
+    status: a.string().required(),
+    message: a.string(),
+  }),
+
+  cleanupTranscriptText: a
+    .mutation()
+    .arguments({
+      practiceCode: a.string(),
+      childNames: a.string().array(),
+      transcriptText: a.string().required(),
+    })
+    .returns(a.ref("CleanupTranscriptTextResponse"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(cleanupTranscriptTextFn)),
+
+  AnalyzePracticeResponse: a.customType({
+    practiceId: a.string().required(),
+    practiceCode: a.string().required(),
+    name: a.string().required(),
+    memo: a.string().required(),
+    status: a.string().required(),
+    aiModel: a.string(),
+  }),
+
+  analyzePractice: a
+    .mutation()
+    .arguments({
+      practiceId: a.string().required(),
+    })
+    .returns(a.ref("AnalyzePracticeResponse"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(analyzePracticeFn)),
+
+  SuggestPracticeLinksResponse: a.customType({
+    practiceId: a.string().required(),
+    practiceCode: a.string().required(),
+    suggestionCount: a.integer().required(),
+    status: a.string().required(),
+    aiModel: a.string(),
+  }),
+
+  suggestPracticeLinks: a
+    .mutation()
+    .arguments({
+      practiceId: a.string().required(),
+    })
+    .returns(a.ref("SuggestPracticeLinksResponse"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(suggestPracticeLinksFn)),
+
+  RegisterPracticeLinksResponse: a.customType({
+    practiceCode: a.string().required(),
+    registeredCount: a.integer().required(),
+    status: a.string().required(),
+  }),
+
+  registerPracticeLinks: a
+    .mutation()
+    .arguments({
+      practiceCode: a.string().required(),
+    })
+    .returns(a.ref("RegisterPracticeLinksResponse"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(registerPracticeLinksFn)),
+  
+    PracticeCode: a
+  .model({
+    practice_code: a.string().required(),
+
+    tenantId: a.string().required(),
+    owner: a.string().required(),
+
+    category_code: a.string(),
+    category_name: a.string(),
+    name: a.string().required(),
+    memo: a.string(),
+
+    source_type: a.string().required(),
+    source_ref: a.string(),
+    source_url: a.string(),
+
+    status: a.string().required(),
+    version: a.integer().required(),
+
+    createdBy: a.string(),
+    updatedBy: a.string(),
+
+    visibility: a.string(),
+    publishScope: a.string(),
+    ownerType: a.string(),
+
+    practiceCategory: a.string(),
+    practiceSourceType: a.string(),
+
+    recordedAt: a.datetime(),
+    transcriptText: a.string(),
+
+    aiStatus: a.string(),
+    aiModel: a.string(),
+    aiRawJson: a.string(),
+
+    errorMessage: a.string(),
+
+    reviewedAt: a.datetime(),
+    completedAt: a.datetime(),
+  })
+  .secondaryIndexes((index) => [
+    index("tenantId")
+      .sortKeys(["practice_code"])
+      .queryField("listPracticeCodesByTenant"),
+    index("tenantId")
+      .sortKeys(["status", "practice_code"])
+      .queryField("listPracticeCodesByTenantStatus"),
+    index("tenantId")
+      .sortKeys(["practiceCategory", "practice_code"])
+      .queryField("listPracticeCodesByTenantCategory"),
+    index("owner")
+      .sortKeys(["practice_code"])
+      .queryField("listPracticeCodesByOwner"),
+  ])
+  .authorization((allow) => [
+    allow.authenticated().to(["create", "read", "update", "delete"]),
+  ]),
+
+PracticeLinkSuggestion: a
+  .model({
+    tenantId: a.string().required(),
+    practiceCode: a.string().required(),
+    abilityCode: a.string().required(),
+    score: a.integer().required(),
+    reason: a.string(),
+    status: a.string().required(),
+    sortOrder: a.integer(),
+    createdBy: a.string(),
+    updatedBy: a.string(),
+  })
+  .secondaryIndexes((index) => [
+    index("practiceCode")
+      .sortKeys(["status", "sortOrder"])
+      .queryField("listPracticeLinkSuggestionsByPractice"),
+    index("tenantId")
+      .sortKeys(["practiceCode", "status"])
+      .queryField("listPracticeLinkSuggestionsByTenantPractice"),
+  ])
+  .authorization((allow) => [
+    allow.authenticated().to(["create", "read", "update", "delete"]),
+  ]),
+
+AbilityPracticeLink: a
+  .model({
+    abilityCode: a.string().required(),
+    practiceCode: a.string().required(),
+    score: a.integer().required(),
+  })
+  .identifier(["abilityCode", "practiceCode"])
+  .secondaryIndexes((index) => [
+    index("abilityCode")
+      .sortKeys(["practiceCode"])
+      .queryField("listByAbility"),
+    index("practiceCode")
+      .sortKeys(["abilityCode"])
+      .queryField("listByPractice"),
+  ])
+  .authorization((allow) => [
+    allow.authenticated().to(["create", "read", "update", "delete"]),
+  ]),
+
+AbilityPracticeAgg: a
+  .model({
+    abilityCode: a.string().required(),
+    practiceCode: a.string().required(),
+    scoreSum: a.integer().required(),
+    scoreMax: a.integer().required(),
+    linkCount: a.integer().required(),
+    level: a.integer().required(),
+  })
+  .authorization((allow) => [
+    allow.authenticated().to(["create", "read", "update", "delete"]),
+  ]),
+  
+    /**
    * Phase 1-A:
    * Observation record.
    *
@@ -158,7 +388,13 @@ const schema = a.schema({
       status: a.string().required(), // ACTIVE / INACTIVE
     })
     .authorization((allow) => [allow.authenticated()]),
-});
+})
+ .authorization((allow) => [
+   allow.resource(cleanupTranscriptTextFn),
+   allow.resource(analyzePracticeFn),
+   allow.resource(suggestPracticeLinksFn),
+   allow.resource(registerPracticeLinksFn),
+]);
 
 export type Schema = ClientSchema<typeof schema>;
 
