@@ -9,6 +9,7 @@ type Props = {
 
 type CategoryOption = "outdoor" | "indoor" | "life" | "event" | "environment";
 type PublishOption = "global" | "tenant" | "private";
+type SeasonalityOption = "ALL_YEAR" | "MONTHS";
 
 type PracticeCodeCreateInput = Record<string, unknown>;
 type PracticeCodeUpdateInput = Record<string, unknown> & { id: string };
@@ -108,6 +109,10 @@ type PracticeCodeRow = {
   owner?: string | null;
   practiceCategory?: string | null;
   practiceSourceType?: string | null;
+  targetAgeMin?: number | null;
+  targetAgeMax?: number | null;
+  seasonalityType?: string | null;
+  seasonMonthsJson?: unknown;
   recordedAt?: string | null;
   transcriptText?: string | null;
   aiStatus?: string | null;
@@ -190,6 +195,31 @@ const PUBLISH_OPTIONS: Array<{ value: PublishOption; label: string }> = [
   { value: "private", label: "非公開" },
 ];
 
+const TARGET_AGE_OPTIONS = [3, 4, 5] as const;
+const DEFAULT_TARGET_AGE_MIN = 3;
+const DEFAULT_TARGET_AGE_MAX = 5;
+const ALL_MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+const SEASONALITY_OPTIONS: Array<{ value: SeasonalityOption; label: string }> = [
+  { value: "ALL_YEAR", label: "通年" },
+  { value: "MONTHS", label: "月指定" },
+];
+
+const MONTH_LABELS = [
+  "1月",
+  "2月",
+  "3月",
+  "4月",
+  "5月",
+  "6月",
+  "7月",
+  "8月",
+  "9月",
+  "10月",
+  "11月",
+  "12月",
+];
+
 function s(value: unknown): string {
   return String(value ?? "").trim();
 }
@@ -197,6 +227,63 @@ function s(value: unknown): string {
 function n(value: unknown, fallback = 0): number {
   const parsed = Number(value ?? fallback);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseMonths(value: unknown): number[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+  }
+
+  const text = s(value);
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+    }
+  } catch {
+    // Fall through to comma-separated parsing.
+  }
+
+  return text
+    .split(",")
+    .map((item) => Number(item.trim()))
+    .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+}
+
+function normalizeAge(value: unknown, fallback: number): number {
+  const age = Number(value ?? fallback);
+  if (TARGET_AGE_OPTIONS.some((option) => option === age)) return age;
+  return fallback;
+}
+
+function normalizeSeasonality(value: unknown): SeasonalityOption {
+  return s(value).toUpperCase() === "MONTHS" ? "MONTHS" : "ALL_YEAR";
+}
+
+function formatTargetAge(minAge: unknown, maxAge: unknown): string {
+  const min = normalizeAge(minAge, DEFAULT_TARGET_AGE_MIN);
+  const max = normalizeAge(maxAge, DEFAULT_TARGET_AGE_MAX);
+  return min === max ? `${min}歳` : `${min}〜${max}歳`;
+}
+
+function formatSeasonality(type: unknown, monthsValue: unknown): string {
+  const seasonalityType = normalizeSeasonality(type);
+  if (seasonalityType === "ALL_YEAR") return "通年";
+
+  const months = parseMonths(monthsValue);
+  if (months.length === 0) return "月指定（未設定）";
+
+  return months
+    .slice()
+    .sort((a, b) => a - b)
+    .map((month) => `${month}月`)
+    .join("、");
 }
 
 function toVisibilityAndScope(publish: PublishOption): {
@@ -361,6 +448,12 @@ export default function PracticeRegisterPanel(props: Props) {
   const [category, setCategory] = useState<CategoryOption>("outdoor");
   const [publish, setPublish] = useState<PublishOption>("tenant");
 
+  const [targetAgeMin, setTargetAgeMin] = useState(DEFAULT_TARGET_AGE_MIN);
+  const [targetAgeMax, setTargetAgeMax] = useState(DEFAULT_TARGET_AGE_MAX);
+  const [seasonalityType, setSeasonalityType] =
+    useState<SeasonalityOption>("ALL_YEAR");
+  const [seasonMonths, setSeasonMonths] = useState<number[]>(ALL_MONTHS);
+
   const [transcriptText, setTranscriptText] = useState("");
   const [practiceName, setPracticeName] = useState("");
   const [memo, setMemo] = useState("");
@@ -407,6 +500,39 @@ export default function PracticeRegisterPanel(props: Props) {
     acceptingAll ||
     registering;
 
+  const selectedSeasonMonths =
+    seasonalityType === "ALL_YEAR" ? ALL_MONTHS : seasonMonths;
+
+  function handleChangeTargetAgeMin(nextAge: number) {
+    setTargetAgeMin(nextAge);
+    if (targetAgeMax < nextAge) setTargetAgeMax(nextAge);
+  }
+
+  function handleChangeTargetAgeMax(nextAge: number) {
+    setTargetAgeMax(nextAge);
+    if (targetAgeMin > nextAge) setTargetAgeMin(nextAge);
+  }
+
+  function handleChangeSeasonality(nextType: SeasonalityOption) {
+    setSeasonalityType(nextType);
+    if (nextType === "ALL_YEAR") {
+      setSeasonMonths(ALL_MONTHS);
+    } else if (seasonMonths.length === 0) {
+      const currentMonth = new Date().getMonth() + 1;
+      setSeasonMonths([currentMonth]);
+    }
+  }
+
+  function handleToggleSeasonMonth(month: number, checked: boolean) {
+    setSeasonMonths((prev) => {
+      const next = checked
+        ? Array.from(new Set([...prev, month]))
+        : prev.filter((item) => item !== month);
+
+      return next.sort((a, b) => a - b);
+    });
+  }
+
   const loadAbilityCodes = useCallback(async () => {
     const result = await abilityCodeModel.list({ limit: 10000 });
 
@@ -432,6 +558,10 @@ export default function PracticeRegisterPanel(props: Props) {
     setLoadPracticeCode("");
     setCategory("outdoor");
     setPublish("tenant");
+    setTargetAgeMin(DEFAULT_TARGET_AGE_MIN);
+    setTargetAgeMax(DEFAULT_TARGET_AGE_MAX);
+    setSeasonalityType("ALL_YEAR");
+    setSeasonMonths(ALL_MONTHS);
     setTranscriptText("");
     setPracticeName("");
     setMemo("");
@@ -455,6 +585,29 @@ export default function PracticeRegisterPanel(props: Props) {
         s(practice.practiceCategory) || s(practice.category_name),
       ),
     );
+
+    const nextAgeMin = normalizeAge(
+      practice.targetAgeMin,
+      DEFAULT_TARGET_AGE_MIN,
+    );
+    const nextAgeMax = normalizeAge(
+      practice.targetAgeMax,
+      DEFAULT_TARGET_AGE_MAX,
+    );
+    setTargetAgeMin(Math.min(nextAgeMin, nextAgeMax));
+    setTargetAgeMax(Math.max(nextAgeMin, nextAgeMax));
+
+    const nextSeasonality = normalizeSeasonality(practice.seasonalityType);
+    const nextMonths = parseMonths(practice.seasonMonthsJson);
+    setSeasonalityType(nextSeasonality);
+    setSeasonMonths(
+      nextSeasonality === "ALL_YEAR"
+        ? ALL_MONTHS
+        : nextMonths.length > 0
+          ? nextMonths
+          : ALL_MONTHS,
+    );
+
     setPublish(
       fromVisibilityAndScope({
         visibility: practice.visibility,
@@ -629,6 +782,14 @@ export default function PracticeRegisterPanel(props: Props) {
     const nextName =
       practiceName.trim() || defaultPracticeName(text) || "Practice下書き";
     const nextStatus = options?.nextStatus ?? "REVIEW";
+    const normalizedTargetAgeMin = Math.min(targetAgeMin, targetAgeMax);
+    const normalizedTargetAgeMax = Math.max(targetAgeMin, targetAgeMax);
+    const normalizedSeasonMonths =
+      seasonalityType === "ALL_YEAR" ? ALL_MONTHS : selectedSeasonMonths;
+
+    if (seasonalityType === "MONTHS" && normalizedSeasonMonths.length === 0) {
+      throw new Error("月指定の場合は、対象月を1つ以上選択してください。");
+    }
 
     if (createdPracticeId) {
       const updatePayload: PracticeCodeUpdateInput = {
@@ -650,6 +811,10 @@ export default function PracticeRegisterPanel(props: Props) {
         ownerType: "user",
         practiceCategory: category,
         practiceSourceType: "text",
+        targetAgeMin: normalizedTargetAgeMin,
+        targetAgeMax: normalizedTargetAgeMax,
+        seasonalityType,
+        seasonMonthsJson: JSON.stringify(normalizedSeasonMonths),
         recordedAt: nowIso,
         transcriptText: text,
         aiStatus: "PENDING",
@@ -703,6 +868,10 @@ export default function PracticeRegisterPanel(props: Props) {
       ownerType: "user",
       practiceCategory: category,
       practiceSourceType: "text",
+      targetAgeMin: normalizedTargetAgeMin,
+      targetAgeMax: normalizedTargetAgeMax,
+      seasonalityType,
+      seasonMonthsJson: JSON.stringify(normalizedSeasonMonths),
       recordedAt: nowIso,
       transcriptText: text,
       aiStatus: "PENDING",
@@ -1092,6 +1261,10 @@ export default function PracticeRegisterPanel(props: Props) {
         version: 1,
         status: "ARCHIVED",
         practiceCategory: category,
+        targetAgeMin,
+        targetAgeMax,
+        seasonalityType,
+        seasonMonthsJson: JSON.stringify(selectedSeasonMonths),
         visibility: toVisibilityAndScope(publish).visibility,
         publishScope: toVisibilityAndScope(publish).publishScope,
         transcriptText: transcriptText.trim(),
@@ -1241,6 +1414,125 @@ export default function PracticeRegisterPanel(props: Props) {
                   <span>{opt.label}</span>
                 </label>
               ))}
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 16,
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              padding: 12,
+              border: "1px solid #eee",
+              borderRadius: 8,
+              background: "#fcfcfc",
+            }}
+          >
+            <div style={{ fontWeight: 700 }}>対象年齢</div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                最小
+                <select
+                  value={targetAgeMin}
+                  disabled={busy}
+                  onChange={(e) => handleChangeTargetAgeMin(Number(e.target.value))}
+                >
+                  {TARGET_AGE_OPTIONS.map((age) => (
+                    <option key={age} value={age}>
+                      {age}歳
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                最大
+                <select
+                  value={targetAgeMax}
+                  disabled={busy}
+                  onChange={(e) => handleChangeTargetAgeMax(Number(e.target.value))}
+                >
+                  {TARGET_AGE_OPTIONS.map((age) => (
+                    <option key={age} value={age}>
+                      {age}歳
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div style={{ fontSize: 12, color: "#666" }}>
+              インパクト分析で、対象クラス年齢に合うPracticeだけを候補に出すための情報です。
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              padding: 12,
+              border: "1px solid #eee",
+              borderRadius: 8,
+              background: "#fcfcfc",
+            }}
+          >
+            <div style={{ fontWeight: 700 }}>季節性</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {SEASONALITY_OPTIONS.map((opt) => (
+                <label key={opt.value} style={{ display: "flex", gap: 8 }}>
+                  <input
+                    type="radio"
+                    name="practice-seasonality"
+                    value={opt.value}
+                    checked={seasonalityType === opt.value}
+                    disabled={busy}
+                    onChange={() => handleChangeSeasonality(opt.value)}
+                  />
+                  <span>{opt.label}</span>
+                </label>
+              ))}
+            </div>
+
+            {seasonalityType === "MONTHS" ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                  gap: 6,
+                }}
+              >
+                {ALL_MONTHS.map((month) => (
+                  <label
+                    key={month}
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      alignItems: "center",
+                      fontSize: 13,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={seasonMonths.includes(month)}
+                      disabled={busy}
+                      onChange={(e) =>
+                        handleToggleSeasonMonth(month, e.target.checked)
+                      }
+                    />
+                    <span>{MONTH_LABELS[month - 1]}</span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+
+            <div style={{ fontSize: 12, color: "#666" }}>
+              七夕やクリスマスなど、時期が限定されるPracticeは月指定にします。
             </div>
           </div>
         </div>
@@ -1560,6 +1852,13 @@ export default function PracticeRegisterPanel(props: Props) {
             </div>
             <div>
               <strong>Status:</strong> {createdStatus || "(未設定)"}
+            </div>
+            <div>
+              <strong>対象年齢:</strong> {formatTargetAge(targetAgeMin, targetAgeMax)}
+            </div>
+            <div>
+              <strong>季節性:</strong>{" "}
+              {formatSeasonality(seasonalityType, selectedSeasonMonths)}
             </div>
             <div>
               <strong>Tenant:</strong> {tenantId}

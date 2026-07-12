@@ -261,6 +261,17 @@ const schema = a.schema({
     practiceCategory: a.string(),
     practiceSourceType: a.string(),
 
+    // Practice eligibility metadata for Plan / ImpactAnalysis.
+    // MVP2 initial default:
+    // - targetAgeMin = 3
+    // - targetAgeMax = 5
+    // - seasonalityType = "ALL_YEAR"
+    // - seasonMonthsJson = [1,2,3,4,5,6,7,8,9,10,11,12]
+    targetAgeMin: a.integer(),
+    targetAgeMax: a.integer(),
+    seasonalityType: a.string(), // ALL_YEAR / MONTHS
+    seasonMonthsJson: a.json(),
+
     recordedAt: a.datetime(),
     transcriptText: a.string(),
 

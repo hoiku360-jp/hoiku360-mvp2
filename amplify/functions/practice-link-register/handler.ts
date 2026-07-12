@@ -25,6 +25,10 @@ type PracticeCodeRow = Schema["PracticeCode"]["type"] & {
   practiceCategory?: string | null;
   visibility?: string | null;
   publishScope?: string | null;
+  targetAgeMin?: number | null;
+  targetAgeMax?: number | null;
+  seasonalityType?: string | null;
+  seasonMonthsJson?: unknown;
   version?: number | null;
 };
 
@@ -56,6 +60,21 @@ function isoNow() {
   return new Date().toISOString();
 }
 
+function jsonFieldValue(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    try {
+      JSON.parse(trimmed);
+      return trimmed;
+    } catch {
+      return JSON.stringify(trimmed);
+    }
+  }
+  return JSON.stringify(value);
+}
+
 function buildPracticeUpdateBase(practice: PracticeCodeRow) {
   return {
     id: practice.id,
@@ -66,6 +85,10 @@ function buildPracticeUpdateBase(practice: PracticeCodeRow) {
     practiceCategory: practice.practiceCategory ?? undefined,
     visibility: practice.visibility ?? undefined,
     publishScope: practice.publishScope ?? undefined,
+    targetAgeMin: practice.targetAgeMin ?? undefined,
+    targetAgeMax: practice.targetAgeMax ?? undefined,
+    seasonalityType: practice.seasonalityType ?? undefined,
+    seasonMonthsJson: jsonFieldValue(practice.seasonMonthsJson),
     name: practice.name ?? "",
     memo: practice.memo ?? "",
     source_type: practice.source_type ?? "practiceRegister",

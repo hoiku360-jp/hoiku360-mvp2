@@ -84,6 +84,10 @@ type PracticeCodeRow = {
   publishScope?: string | null;
   owner?: string | null;
   practiceCategory?: string | null;
+  targetAgeMin?: number | null;
+  targetAgeMax?: number | null;
+  seasonalityType?: string | null;
+  seasonMonthsJson?: unknown;
   recordedAt?: string | null;
   transcriptText?: string | null;
   aiStatus?: string | null;
@@ -173,6 +177,58 @@ function practiceCategoryLabel(value: unknown): string {
   );
 
   return found ? `${found.label}（${found.value}）` : normalized;
+}
+
+function parseMonths(value: unknown): number[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+  }
+
+  const text = s(value);
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+    }
+  } catch {
+    // Fall through to comma-separated parsing.
+  }
+
+  return text
+    .split(",")
+    .map((item) => Number(item.trim()))
+    .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+}
+
+function practiceTargetAgeLabel(practice?: PracticeCodeRow | null): string {
+  if (!practice) return "-";
+
+  const min = n(practice.targetAgeMin, 3);
+  const max = n(practice.targetAgeMax, 5);
+
+  return min === max ? `${min}歳` : `${min}〜${max}歳`;
+}
+
+function practiceSeasonalityLabel(practice?: PracticeCodeRow | null): string {
+  if (!practice) return "-";
+
+  const type = s(practice.seasonalityType || "ALL_YEAR").toUpperCase();
+  if (type !== "MONTHS") return "通年";
+
+  const months = parseMonths(practice.seasonMonthsJson);
+  if (months.length === 0) return "月指定（未設定）";
+
+  return months
+    .slice()
+    .sort((a, b) => a - b)
+    .map((month) => `${month}月`)
+    .join("、");
 }
 
 async function listAll<T, TArgs>(
@@ -940,6 +996,8 @@ export default function PracticeSearchPanel(props: Props) {
                     <th style={{ padding: 8 }}>practice_code</th>
                     <th style={{ padding: 8 }}>name</th>
                     <th style={{ padding: 8 }}>category</th>
+                    <th style={{ padding: 8 }}>対象年齢</th>
+                    <th style={{ padding: 8 }}>季節性</th>
                     <th style={{ padding: 8 }}>scoreSum</th>
                     <th style={{ padding: 8 }}>scoreMax</th>
                     <th style={{ padding: 8 }}>linkCount</th>
@@ -977,6 +1035,12 @@ export default function PracticeSearchPanel(props: Props) {
                             s(practice?.practiceCategory) || s(practice?.category_name),
                           )}
                         </td>
+                        <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>
+                          {practiceTargetAgeLabel(practice)}
+                        </td>
+                        <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>
+                          {practiceSeasonalityLabel(practice)}
+                        </td>
                         <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>{n(row.scoreSum)}</td>
                         <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>{n(row.scoreMax)}</td>
                         <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>{n(row.linkCount)}</td>
@@ -1007,7 +1071,7 @@ export default function PracticeSearchPanel(props: Props) {
             <table
               style={{
                 width: "100%",
-                minWidth: 1080,
+                minWidth: 1240,
                 borderCollapse: "collapse",
               }}
             >
@@ -1017,6 +1081,8 @@ export default function PracticeSearchPanel(props: Props) {
                   <th style={{ padding: 8 }}>name</th>
                   <th style={{ padding: 8 }}>status</th>
                   <th style={{ padding: 8 }}>category</th>
+                  <th style={{ padding: 8 }}>対象年齢</th>
+                  <th style={{ padding: 8 }}>季節性</th>
                   <th style={{ padding: 8 }}>visibility</th>
                   <th style={{ padding: 8 }}>recordedAt</th>
                   <th style={{ padding: 8, minWidth: 320 }}>memo</th>
@@ -1051,6 +1117,12 @@ export default function PracticeSearchPanel(props: Props) {
                         {practiceCategoryLabel(
                           s(practice.practiceCategory) || s(practice.category_name),
                         )}
+                      </td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>
+                        {practiceTargetAgeLabel(practice)}
+                      </td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>
+                        {practiceSeasonalityLabel(practice)}
                       </td>
                       <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>
                         {s(practice.visibility) || s(practice.publishScope) || "-"}
