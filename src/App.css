@@ -127,3 +127,41 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+.muted {
+  color: #6b7280;
+  line-height: 1.7;
+}
+
+.classroom-child-list {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.classroom-child-card {
+  padding: 16px;
+  border-radius: 18px;
+  background: #f7faf8;
+  border: 1px solid #e3ebe5;
+}
+
+.classroom-child-card h3 {
+  margin: 0 0 12px;
+}
+
+.classroom-child-card ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.classroom-child-card li {
+  line-height: 1.7;
+}
+
+.classroom-child-card small {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+}
