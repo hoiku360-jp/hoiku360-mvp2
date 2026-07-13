@@ -101,6 +101,58 @@ type UserProfileRow = {
   status?: string | null;
 };
 
+type PracticeCodeRow = {
+  id?: string | null;
+  practice_code?: string | null;
+  category_code?: string | null;
+  category_name?: string | null;
+  name?: string | null;
+  memo?: string | null;
+  status?: string | null;
+  tenantId?: string | null;
+  owner?: string | null;
+  visibility?: string | null;
+  publishScope?: string | null;
+  practiceCategory?: string | null;
+  targetAgeMin?: number | null;
+  targetAgeMax?: number | null;
+  seasonalityType?: string | null;
+  seasonMonthsJson?: unknown;
+  recordedAt?: string | null;
+  transcriptText?: string | null;
+  completedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+type AbilityPracticeLinkRow = {
+  abilityCode?: string | null;
+  practiceCode?: string | null;
+  score?: number | null;
+};
+
+type ImpactAnalysisRow = {
+  id?: string | null;
+  tenantId?: string | null;
+  fiscalYear?: number | null;
+  scopeType?: string | null;
+  classroomId?: string | null;
+  staffUserId?: string | null;
+  targetKind?: string | null;
+  status?: string | null;
+  sourcePlanId?: string | null;
+  periodStartDate?: string | null;
+  periodEndDate?: string | null;
+  title?: string | null;
+  inputJson?: string | null;
+  resultJson?: string | null;
+  selectedJson?: string | null;
+  createdByUserId?: string | null;
+  updatedByUserId?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
 type ClassroomModelClient = {
   list: (input?: Record<string, unknown>) => Promise<ListResult<ClassroomRow>>;
 };
@@ -127,9 +179,25 @@ type UserProfileModelClient = {
   get: (input: { id: string }) => Promise<OperationResult<UserProfileRow>>;
 };
 
+type PracticeCodeModelClient = {
+  list: (input?: Record<string, unknown>) => Promise<ListResult<PracticeCodeRow>>;
+};
+
+type AbilityPracticeLinkModelClient = {
+  list: (input?: Record<string, unknown>) => Promise<ListResult<AbilityPracticeLinkRow>>;
+};
+
+type ImpactAnalysisModelClient = {
+  list: (input?: Record<string, unknown>) => Promise<ListResult<ImpactAnalysisRow>>;
+  create: (input: Record<string, unknown>) => Promise<OperationResult<ImpactAnalysisRow>>;
+  update: (
+    input: Record<string, unknown> & { id: string },
+  ) => Promise<OperationResult<ImpactAnalysisRow>>;
+};
+
 type PlanPeriodType = "YEAR" | "TERM" | "MONTH";
 type TermKey = "Q1" | "Q2" | "Q3" | "Q4";
-type WorkspaceView = "edit" | "overview";
+type WorkspaceView = "edit" | "overview" | "impact";
 
 type PeriodRange = {
   startDate: string;
@@ -174,6 +242,29 @@ type CoverageRow = {
   count: number;
 };
 
+type ImpactRequiredAbilityRow = {
+  abilityCode: string;
+  label: string;
+  areaCode: string;
+  areaLabel: string;
+  requiredScore: number;
+};
+
+type ImpactCoverageRow = ImpactRequiredAbilityRow & {
+  coveredScore: number;
+  remainingScore: number;
+};
+
+type ImpactCandidateRow = {
+  practice: PracticeCodeRow;
+  practiceCode: string;
+  matchedRequiredCodes: string[];
+  matchedRequiredLabels: string[];
+  potentialScore: number;
+  uncoveredScore: number;
+  linkCount: number;
+};
+
 const PLAN_PERIOD_OPTIONS: Array<{ value: PlanPeriodType; label: string }> = [
   { value: "MONTH", label: "月間計画" },
   { value: "TERM", label: "期計画" },
@@ -190,6 +281,14 @@ const TERM_OPTIONS: Array<{
   { value: "Q2", label: "7〜9月", startMonth: 7, endMonth: 9 },
   { value: "Q3", label: "10〜12月", startMonth: 10, endMonth: 12 },
   { value: "Q4", label: "1〜3月", startMonth: 1, endMonth: 3 },
+];
+
+const PRACTICE_CATEGORY_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "outdoor", label: "外遊び" },
+  { value: "indoor", label: "室内遊び" },
+  { value: "life", label: "生活" },
+  { value: "event", label: "行事" },
+  { value: "environment", label: "環境構成" },
 ];
 
 const AREA_DEFS: CoverageRow[] = [
@@ -236,6 +335,255 @@ function errorText(
     .join("\n");
 
   return message || fallback;
+}
+
+
+function parseJsonRecord(value: unknown): Record<string, unknown> | null {
+  const text = s(value);
+  if (!text) return null;
+
+  try {
+    const parsed = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseMonths(value: unknown): number[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+  }
+
+  const text = s(value);
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => Number(item))
+        .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+    }
+  } catch {
+    // Fall through to comma-separated parsing.
+  }
+
+  return text
+    .split(",")
+    .map((item) => Number(item.trim()))
+    .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+}
+
+function monthFromDate(value: unknown): number | null {
+  const text = s(value);
+  const match = text.match(/^\d{4}-(\d{2})-/);
+  if (!match) return null;
+
+  const month = Number(match[1]);
+  return Number.isInteger(month) && month >= 1 && month <= 12 ? month : null;
+}
+
+function practiceVisibleForTenant(
+  row: { tenantId?: string | null; publishScope?: string | null; visibility?: string | null },
+  targetTenantId: string,
+): boolean {
+  const rowTenantId = s(row.tenantId);
+  const publishScope = s(row.publishScope).toLowerCase();
+  const visibility = s(row.visibility).toLowerCase();
+
+  if (!targetTenantId) return true;
+  if (!rowTenantId || rowTenantId === targetTenantId) return true;
+  if (rowTenantId === "global" || rowTenantId === "common") return true;
+
+  // MVP2 common-practice rule:
+  // PracticeCode keeps tenantId for provenance, but publishScope=global means
+  // it can be used as a common practice candidate across tenants.
+  return publishScope === "global" || (visibility === "public" && publishScope === "global");
+}
+
+function activePracticeStatus(value: unknown): boolean {
+  const status = s(value || "COMPLETED").toUpperCase();
+  return status !== "ARCHIVED" && status !== "ERROR" && status !== "DELETED";
+}
+
+function normalizePracticeCategory(value: unknown): string {
+  const raw = s(value);
+  if (!raw) return "";
+
+  const lower = raw.toLowerCase();
+  if (PRACTICE_CATEGORY_OPTIONS.some((opt) => opt.value === lower)) {
+    return lower;
+  }
+
+  switch (raw) {
+    case "外遊び":
+      return "outdoor";
+    case "室内遊び":
+      return "indoor";
+    case "生活":
+    case "生活（身支度/食事/排泄など）":
+      return "life";
+    case "行事":
+      return "event";
+    case "環境":
+    case "環境構成":
+      return "environment";
+    default:
+      return raw;
+  }
+}
+
+function practiceCategoryLabel(value: unknown): string {
+  const normalized = normalizePracticeCategory(value);
+  if (!normalized) return "-";
+
+  return PRACTICE_CATEGORY_OPTIONS.find((opt) => opt.value === normalized)?.label ?? normalized;
+}
+
+function practiceTargetAgeLabel(practice?: PracticeCodeRow | null): string {
+  if (!practice) return "-";
+
+  const min = n(practice.targetAgeMin, 3);
+  const max = n(practice.targetAgeMax, 5);
+  return min === max ? `${min}歳` : `${min}〜${max}歳`;
+}
+
+function practiceSeasonalityLabel(practice?: PracticeCodeRow | null): string {
+  if (!practice) return "-";
+
+  const type = s(practice.seasonalityType || "ALL_YEAR").toUpperCase();
+  if (type !== "MONTHS") return "通年";
+
+  const months = parseMonths(practice.seasonMonthsJson);
+  if (months.length === 0) return "月指定（未設定）";
+
+  return months
+    .slice()
+    .sort((a, b) => a - b)
+    .map((month) => `${month}月`)
+    .join("、");
+}
+
+function practiceFitsAgeAndMonth(
+  practice: PracticeCodeRow,
+  ageYears: number | null,
+  targetMonth: number | null,
+): boolean {
+  if (!ageYears || !targetMonth) return false;
+
+  const min = n(practice.targetAgeMin, 3);
+  const max = n(practice.targetAgeMax, 5);
+  if (ageYears < Math.min(min, max) || ageYears > Math.max(min, max)) return false;
+
+  const seasonalityType = s(practice.seasonalityType || "ALL_YEAR").toUpperCase();
+  if (seasonalityType !== "MONTHS") return true;
+
+  return parseMonths(practice.seasonMonthsJson).includes(targetMonth);
+}
+
+function areaLabelForCode(areaCode: string): string {
+  return AREA_DEFS.find((row) => row.code === areaCode)?.label ?? areaCode;
+}
+
+function postureLabelForCode(postureCode: string): string {
+  return POSTURE_DEFS.find((row) => row.code === postureCode)?.label ?? postureCode;
+}
+
+function postureCodeFromAbilityCode(value: unknown): string {
+  const code = s(value);
+  return /^[0-9]{4}/.test(code) ? code.slice(0, 4) : code;
+}
+
+function requiredAbilityLabel(link: PlanPhraseAbilityLinkRow, postureCode: string): string {
+  const categoryCode = s(link.categoryCode);
+  if (categoryCode.startsWith(postureCode) && s(link.categoryName)) {
+    return s(link.categoryName);
+  }
+
+  const abilityCode = s(link.abilityCode);
+  if (abilityCode === postureCode && s(link.abilityName)) {
+    return s(link.abilityName);
+  }
+
+  return postureLabelForCode(postureCode);
+}
+
+function requiredAbilitiesFromPhraseIds(
+  selectedPhraseIds: string[],
+  phraseLinks: PlanPhraseAbilityLinkRow[],
+): ImpactRequiredAbilityRow[] {
+  const selectedSet = new Set(selectedPhraseIds);
+  const map = new Map<string, ImpactRequiredAbilityRow>();
+
+  for (const link of phraseLinks) {
+    if (!activeStatus(link.status)) continue;
+    if (!selectedSet.has(s(link.planPhraseId))) continue;
+
+    const postureCode = postureCodeFromLink(link);
+    if (!postureCode) continue;
+
+    const areaCode = areaCodeFromLink(link);
+    const existing = map.get(postureCode);
+    const weight = Math.max(1, n(link.weight, 1));
+
+    if (existing) {
+      existing.requiredScore += weight;
+    } else {
+      map.set(postureCode, {
+        abilityCode: postureCode,
+        label: requiredAbilityLabel(link, postureCode),
+        areaCode,
+        areaLabel: areaLabelForCode(areaCode),
+        requiredScore: weight,
+      });
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) =>
+    a.abilityCode.localeCompare(b.abilityCode),
+  );
+}
+
+function buildPracticePostureScoreMap(
+  practiceCode: string,
+  linksByPracticeCode: Map<string, AbilityPracticeLinkRow[]>,
+): Map<string, number> {
+  const map = new Map<string, number>();
+
+  for (const link of linksByPracticeCode.get(practiceCode) ?? []) {
+    const postureCode = postureCodeFromAbilityCode(link.abilityCode);
+    if (!postureCode) continue;
+
+    map.set(postureCode, (map.get(postureCode) ?? 0) + Math.max(1, n(link.score, 1)));
+  }
+
+  return map;
+}
+
+function selectedPracticeCodesFromImpact(value: unknown): string[] {
+  const parsed = parseJsonRecord(value);
+  const selectedPracticeCodes = parsed?.selectedPracticeCodes;
+
+  if (Array.isArray(selectedPracticeCodes)) {
+    return selectedPracticeCodes.map((item) => s(item)).filter(Boolean);
+  }
+
+  const selectedPractices = parsed?.selectedPractices;
+  if (Array.isArray(selectedPractices)) {
+    return selectedPractices
+      .map((item) => {
+        if (typeof item !== "object" || item === null) return "";
+        return s((item as { practiceCode?: unknown }).practiceCode);
+      })
+      .filter(Boolean);
+  }
+
+  return [];
 }
 
 async function listAll<T>(
@@ -732,6 +1080,10 @@ export default function PlanWorkspacePanel(props: Props) {
     .PlanPhraseAbilityLink as unknown as PlanPhraseAbilityLinkModelClient;
   const planDocumentModel = client.models.PlanDocument as unknown as PlanDocumentModelClient;
   const userProfileModel = client.models.UserProfile as unknown as UserProfileModelClient;
+  const practiceCodeModel = client.models.PracticeCode as unknown as PracticeCodeModelClient;
+  const abilityPracticeLinkModel = client.models
+    .AbilityPracticeLink as unknown as AbilityPracticeLinkModelClient;
+  const impactAnalysisModel = client.models.ImpactAnalysis as unknown as ImpactAnalysisModelClient;
 
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("edit");
 
@@ -757,6 +1109,14 @@ export default function PlanWorkspacePanel(props: Props) {
   const [reviewerName, setReviewerName] = useState(() => shortDisplayName(owner));
   const [overviewPlans, setOverviewPlans] = useState<PlanDocumentRow[]>([]);
   const [overviewLoading, setOverviewLoading] = useState(false);
+
+  const [impactPlanId, setImpactPlanId] = useState("");
+  const [impactPractices, setImpactPractices] = useState<PracticeCodeRow[]>([]);
+  const [abilityPracticeLinks, setAbilityPracticeLinks] = useState<AbilityPracticeLinkRow[]>([]);
+  const [selectedImpactPracticeCodes, setSelectedImpactPracticeCodes] = useState<string[]>([]);
+  const [impactAnalysisId, setImpactAnalysisId] = useState("");
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactSaving, setImpactSaving] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [loadingPlan, setLoadingPlan] = useState(false);
@@ -910,6 +1270,134 @@ export default function PlanWorkspacePanel(props: Props) {
     [overviewItems],
   );
 
+
+  const approvedMonthlyPlans = useMemo(
+    () => overviewItems.filter((item) =>
+      s(item.plan.planKind).toUpperCase() === "MONTHLY" &&
+      s(item.plan.status).toUpperCase() === "APPROVED",
+    ),
+    [overviewItems],
+  );
+
+  const selectedImpactItem = useMemo(
+    () => approvedMonthlyPlans.find((item) => s(item.plan.id) === impactPlanId) ?? null,
+    [approvedMonthlyPlans, impactPlanId],
+  );
+
+  const impactTargetMonth = useMemo(
+    () => monthFromDate(selectedImpactItem?.plan.periodStartDate),
+    [selectedImpactItem?.plan.periodStartDate],
+  );
+
+  const selectedImpactPhraseIds = useMemo(
+    () => selectedImpactItem?.selectedPhraseIds ?? [],
+    [selectedImpactItem?.selectedPhraseIds],
+  );
+
+  const requiredImpactAbilities = useMemo(
+    () => requiredAbilitiesFromPhraseIds(selectedImpactPhraseIds, phraseLinks),
+    [phraseLinks, selectedImpactPhraseIds],
+  );
+
+  const linksByPracticeCode = useMemo(() => {
+    const map = new Map<string, AbilityPracticeLinkRow[]>();
+
+    for (const link of abilityPracticeLinks) {
+      const practiceCode = s(link.practiceCode);
+      if (!practiceCode) continue;
+
+      const list = map.get(practiceCode) ?? [];
+      list.push(link);
+      map.set(practiceCode, list);
+    }
+
+    return map;
+  }, [abilityPracticeLinks]);
+
+  const selectedImpactPracticeCodeSet = useMemo(
+    () => new Set(selectedImpactPracticeCodes),
+    [selectedImpactPracticeCodes],
+  );
+
+  const impactCoverageRows = useMemo<ImpactCoverageRow[]>(() => {
+    return requiredImpactAbilities.map((ability) => {
+      let coveredScore = 0;
+
+      for (const practiceCode of selectedImpactPracticeCodes) {
+        const scores = buildPracticePostureScoreMap(practiceCode, linksByPracticeCode);
+        coveredScore += scores.get(ability.abilityCode) ?? 0;
+      }
+
+      return {
+        ...ability,
+        coveredScore,
+        remainingScore: Math.max(0, ability.requiredScore - coveredScore),
+      };
+    });
+  }, [linksByPracticeCode, requiredImpactAbilities, selectedImpactPracticeCodes]);
+
+  const impactRequiredTotal = useMemo(
+    () => impactCoverageRows.reduce((sum, row) => sum + row.requiredScore, 0),
+    [impactCoverageRows],
+  );
+
+  const impactRemainingTotal = useMemo(
+    () => impactCoverageRows.reduce((sum, row) => sum + row.remainingScore, 0),
+    [impactCoverageRows],
+  );
+
+  const impactCompleted =
+    requiredImpactAbilities.length > 0 && impactRemainingTotal === 0;
+
+  const impactCandidateRows = useMemo<ImpactCandidateRow[]>(() => {
+    const requiredByCode = new Map<string, ImpactRequiredAbilityRow>(requiredImpactAbilities.map((row) => [row.abilityCode, row]));
+    const remainingByCode = new Map<string, number>(impactCoverageRows.map((row) => [row.abilityCode, row.remainingScore]));
+
+    return impactPractices
+      .filter((practice) => {
+        const practiceCode = s(practice.practice_code);
+        if (!practiceCode.startsWith("PR-")) return false;
+        if (!practiceVisibleForTenant(practice, tenantId)) return false;
+        if (!activePracticeStatus(practice.status)) return false;
+        return practiceFitsAgeAndMonth(practice, selectedAgeYears, impactTargetMonth);
+      })
+      .map((practice): ImpactCandidateRow => {
+        const practiceCode = s(practice.practice_code);
+        const scores = buildPracticePostureScoreMap(practiceCode, linksByPracticeCode);
+        const matchedRequiredCodes = Array.from(scores.keys()).filter((code) => requiredByCode.has(code));
+        const matchedRequiredLabels = matchedRequiredCodes.map((code) => requiredByCode.get(code)?.label ?? code);
+        const potentialScore = matchedRequiredCodes.reduce(
+          (sum, code) => sum + (scores.get(code) ?? 0),
+          0,
+        );
+        const uncoveredScore = matchedRequiredCodes.reduce(
+          (sum, code) => sum + Math.min(scores.get(code) ?? 0, remainingByCode.get(code) ?? 0),
+          0,
+        );
+
+        return {
+          practice,
+          practiceCode,
+          matchedRequiredCodes,
+          matchedRequiredLabels,
+          potentialScore,
+          uncoveredScore,
+          linkCount: linksByPracticeCode.get(practiceCode)?.length ?? 0,
+        };
+      })
+      .sort((a, b) => {
+        if (a.uncoveredScore !== b.uncoveredScore) return b.uncoveredScore - a.uncoveredScore;
+        if (a.potentialScore !== b.potentialScore) return b.potentialScore - a.potentialScore;
+        if (a.linkCount !== b.linkCount) return b.linkCount - a.linkCount;
+        return s(a.practice.name).localeCompare(s(b.practice.name), "ja");
+      });
+  }, [impactCoverageRows, impactPractices, impactTargetMonth, linksByPracticeCode, requiredImpactAbilities, selectedAgeYears, tenantId]);
+
+  const selectedImpactPracticeRows = useMemo(
+    () => impactCandidateRows.filter((row) => selectedImpactPracticeCodeSet.has(row.practiceCode)),
+    [impactCandidateRows, selectedImpactPracticeCodeSet],
+  );
+
   const loadOverviewPlans = useCallback(async () => {
     if (!tenantId || !selectedClassroomId) {
       setOverviewPlans([]);
@@ -940,6 +1428,75 @@ export default function PlanWorkspacePanel(props: Props) {
       setOverviewLoading(false);
     }
   }, [fiscalYear, planDocumentModel.list, selectedClassroomId, tenantId]);
+
+  const loadImpactPracticeData = useCallback(async () => {
+    if (!tenantId) {
+      setImpactPractices([]);
+      setAbilityPracticeLinks([]);
+      return;
+    }
+
+    setImpactLoading(true);
+    setError("");
+
+    try {
+      const [practiceRows, linkRows] = await Promise.all([
+        listAll<PracticeCodeRow>(practiceCodeModel.list),
+        listAll<AbilityPracticeLinkRow>(abilityPracticeLinkModel.list),
+      ]);
+
+      setImpactPractices(practiceRows);
+      setAbilityPracticeLinks(linkRows);
+    } catch (e) {
+      console.error(e);
+      setError(
+        `インパクト分析データ読み込みエラー: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    } finally {
+      setImpactLoading(false);
+    }
+  }, [abilityPracticeLinkModel.list, practiceCodeModel.list, tenantId]);
+
+  const loadExistingImpactAnalysis = useCallback(async (sourcePlanId: string) => {
+    if (!tenantId || !sourcePlanId) {
+      setImpactAnalysisId("");
+      setSelectedImpactPracticeCodes([]);
+      return;
+    }
+
+    try {
+      const rows = await listAll<ImpactAnalysisRow>(impactAnalysisModel.list, {
+        filter: {
+          tenantId: { eq: tenantId },
+          fiscalYear: { eq: fiscalYear },
+          sourcePlanId: { eq: sourcePlanId },
+          targetKind: { eq: "PRACTICE_ACTIVITY" },
+        },
+      });
+
+      const latest = rows
+        .filter((row) => s(row.status).toUpperCase() !== "ARCHIVED")
+        .sort((a, b) => s(b.updatedAt || b.createdAt).localeCompare(s(a.updatedAt || a.createdAt)))[0] ?? null;
+
+      setImpactAnalysisId(s(latest?.id));
+
+      if (latest?.selectedJson) {
+        setSelectedImpactPracticeCodes(selectedPracticeCodesFromImpact(latest.selectedJson));
+      } else {
+        setSelectedImpactPracticeCodes([]);
+      }
+    } catch (e) {
+      console.error(e);
+      setError(
+        `保存済みインパクト分析読み込みエラー: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      setImpactAnalysisId("");
+    }
+  }, [fiscalYear, impactAnalysisModel.list, tenantId]);
 
   const loadInitialData = useCallback(async () => {
     setLoading(true);
@@ -1040,6 +1597,41 @@ export default function PlanWorkspacePanel(props: Props) {
   useEffect(() => {
     void loadOverviewPlans();
   }, [loadOverviewPlans]);
+
+
+  useEffect(() => {
+    if (workspaceView !== "impact") return;
+
+    void loadOverviewPlans();
+    void loadImpactPracticeData();
+  }, [loadImpactPracticeData, loadOverviewPlans, workspaceView]);
+
+  useEffect(() => {
+    if (workspaceView !== "impact") return;
+
+    const currentExists = approvedMonthlyPlans.some((item) => s(item.plan.id) === impactPlanId);
+    const firstId = s(approvedMonthlyPlans[0]?.plan.id);
+
+    if (!currentExists) {
+      setImpactPlanId(firstId);
+      if (!firstId) {
+        setSelectedImpactPracticeCodes([]);
+        setImpactAnalysisId("");
+      }
+    }
+  }, [approvedMonthlyPlans, impactPlanId, workspaceView]);
+
+  useEffect(() => {
+    if (workspaceView !== "impact") return;
+
+    if (!impactPlanId) {
+      setImpactAnalysisId("");
+      setSelectedImpactPracticeCodes([]);
+      return;
+    }
+
+    void loadExistingImpactAnalysis(impactPlanId);
+  }, [impactPlanId, loadExistingImpactAnalysis, workspaceView]);
 
   useEffect(() => {
     if (domainOptions.length === 0) {
@@ -1333,6 +1925,157 @@ export default function PlanWorkspacePanel(props: Props) {
     }
   }
 
+  function toggleImpactPractice(practiceCode: string, checked: boolean) {
+    setSelectedImpactPracticeCodes((prev) => {
+      const current = new Set(prev);
+
+      if (checked) {
+        current.add(practiceCode);
+      } else {
+        current.delete(practiceCode);
+      }
+
+      return Array.from(current);
+    });
+  }
+
+  async function handleSaveImpactAnalysis() {
+    if (!tenantId) {
+      setError("tenantId が未取得です。");
+      return;
+    }
+
+    if (!selectedClassroomId) {
+      setError("クラスを選択してください。");
+      return;
+    }
+
+    if (!selectedImpactItem) {
+      setError("承認済み月間計画を選択してください。");
+      return;
+    }
+
+    setImpactSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const sourcePlan = selectedImpactItem.plan;
+      const selectedPractices = selectedImpactPracticeRows.map((row) => ({
+        practiceCode: row.practiceCode,
+        name: s(row.practice.name),
+        practiceCategory: normalizePracticeCategory(
+          s(row.practice.practiceCategory) || s(row.practice.category_name),
+        ),
+        practiceCategoryLabel: practiceCategoryLabel(
+          s(row.practice.practiceCategory) || s(row.practice.category_name),
+        ),
+        matchedRequiredCodes: row.matchedRequiredCodes,
+        matchedRequiredLabels: row.matchedRequiredLabels,
+        potentialScore: row.potentialScore,
+      }));
+
+      const inputJson = {
+        schemaVersion: 1,
+        analysisType: "MONTHLY_PLAN_ABILITY_PRACTICE_COVERAGE",
+        sourcePlanId: s(sourcePlan.id),
+        sourcePlanTitle: s(sourcePlan.title),
+        classroomId: selectedClassroomId,
+        classroomName: s(selectedClassroom?.name),
+        ageYears: selectedAgeYears,
+        targetMonth: impactTargetMonth,
+        periodStartDate: s(sourcePlan.periodStartDate),
+        periodEndDate: s(sourcePlan.periodEndDate),
+        selectedPhraseIds: selectedImpactPhraseIds,
+        filter: {
+          practiceCategory: "ALL",
+          ageYears: selectedAgeYears,
+          targetMonth: impactTargetMonth,
+        },
+      };
+
+      const resultJson = {
+        requiredAbilities: impactCoverageRows.map((row) => ({
+          abilityCode: row.abilityCode,
+          label: row.label,
+          areaCode: row.areaCode,
+          areaLabel: row.areaLabel,
+          requiredScore: row.requiredScore,
+          coveredScore: row.coveredScore,
+          remainingScore: row.remainingScore,
+        })),
+        candidatePractices: impactCandidateRows.map((row) => ({
+          practiceCode: row.practiceCode,
+          name: s(row.practice.name),
+          practiceCategory: normalizePracticeCategory(
+            s(row.practice.practiceCategory) || s(row.practice.category_name),
+          ),
+          targetAge: practiceTargetAgeLabel(row.practice),
+          seasonality: practiceSeasonalityLabel(row.practice),
+          matchedRequiredCodes: row.matchedRequiredCodes,
+          matchedRequiredLabels: row.matchedRequiredLabels,
+          potentialScore: row.potentialScore,
+          uncoveredScore: row.uncoveredScore,
+          linkCount: row.linkCount,
+        })),
+      };
+
+      const selectedJson = {
+        selectedPracticeCodes: selectedImpactPracticeCodes,
+        selectedPractices,
+        remainingAbilities: impactCoverageRows.map((row) => ({
+          abilityCode: row.abilityCode,
+          label: row.label,
+          remainingScore: row.remainingScore,
+        })),
+        completed: impactCompleted,
+        requiredTotal: impactRequiredTotal,
+        remainingTotal: impactRemainingTotal,
+      };
+
+      const payload = {
+        tenantId,
+        fiscalYear,
+        scopeType: "PLAN",
+        classroomId: selectedClassroomId,
+        staffUserId: owner,
+        targetKind: "PRACTICE_ACTIVITY",
+        status: impactCompleted ? "CONFIRMED" : "DRAFT",
+        sourcePlanId: s(sourcePlan.id),
+        periodStartDate: s(sourcePlan.periodStartDate),
+        periodEndDate: s(sourcePlan.periodEndDate),
+        title: `${s(sourcePlan.title) || "月間計画"} Practice消込`,
+        inputJson: JSON.stringify(inputJson),
+        resultJson: JSON.stringify(resultJson),
+        selectedJson: JSON.stringify(selectedJson),
+        createdByUserId: impactAnalysisId ? undefined : owner,
+        updatedByUserId: owner,
+      };
+
+      const result = impactAnalysisId
+        ? await impactAnalysisModel.update({ id: impactAnalysisId, ...payload })
+        : await impactAnalysisModel.create(payload);
+
+      if (result.errors?.length) {
+        throw new Error(errorText(result.errors, "ImpactAnalysis保存に失敗しました。"));
+      }
+
+      setImpactAnalysisId(s(result.data?.id) || impactAnalysisId);
+      setMessage(
+        impactCompleted
+          ? `ImpactAnalysisを保存しました。月間計画Abilityは選択Practiceで満たされています。選択 ${selectedImpactPracticeCodes.length}件`
+          : `ImpactAnalysisを保存しました。残りAbilityスコア ${impactRemainingTotal} / 選択 ${selectedImpactPracticeCodes.length}件`,
+      );
+    } catch (e) {
+      console.error(e);
+      setError(
+        `ImpactAnalysis保存エラー: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setImpactSaving(false);
+    }
+  }
+
   function renderCoverageRows(rows: CoverageRow[], className: string) {
     const max = maxScore(rows);
 
@@ -1357,6 +2100,221 @@ export default function PlanWorkspacePanel(props: Props) {
             </div>
           );
         })}
+      </div>
+    );
+  }
+
+  function renderImpactSection() {
+    return (
+      <div className="impact-section">
+        <div className="impact-summary-card">
+          <div>
+            <strong>起点</strong>
+            <span>承認済み月間計画</span>
+          </div>
+          <div>
+            <strong>対象月</strong>
+            <span>{impactTargetMonth ? `${impactTargetMonth}月` : "未選択"}</span>
+          </div>
+          <div>
+            <strong>必要Ability</strong>
+            <span>{requiredImpactAbilities.length}件 / スコア {impactRequiredTotal}</span>
+          </div>
+          <div>
+            <strong>残り</strong>
+            <span className={impactCompleted ? "impact-complete-text" : ""}>
+              {impactCompleted ? "完了" : `${impactRemainingTotal}`}
+            </span>
+          </div>
+        </div>
+
+        <div className="impact-plan-selector-card">
+          <label>
+            <span>月間計画</span>
+            <select
+              value={impactPlanId}
+              disabled={overviewLoading || impactLoading || approvedMonthlyPlans.length === 0}
+              onChange={(event) => {
+                setImpactPlanId(event.target.value);
+                setSelectedImpactPracticeCodes([]);
+                setImpactAnalysisId("");
+              }}
+            >
+              {approvedMonthlyPlans.length === 0 ? (
+                <option value="">承認済み月間計画なし</option>
+              ) : (
+                approvedMonthlyPlans.map((item) => (
+                  <option key={s(item.plan.id)} value={s(item.plan.id)}>
+                    {s(item.plan.title) || "月間計画"} / {s(item.plan.periodStartDate)}〜{s(item.plan.periodEndDate)}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+
+          <div className="impact-plan-meta">
+            <div>
+              <strong>抽出条件</strong>
+              <span>対象年齢 {selectedAgeYears ? `${selectedAgeYears}歳` : "未判定"} / 実施月 {impactTargetMonth ? `${impactTargetMonth}月` : "未判定"} / Practiceカテゴリ指定なし</span>
+            </div>
+            <div>
+              <strong>候補Practice</strong>
+              <span>{impactLoading ? "読み込み中..." : `${impactCandidateRows.length}件`}</span>
+            </div>
+            <div>
+              <strong>保存状態</strong>
+              <span>{impactAnalysisId ? `保存済み: ${impactAnalysisId}` : "未保存"}</span>
+            </div>
+          </div>
+        </div>
+
+        {impactCompleted ? (
+          <div className="success-box">
+            月間計画から導かれた5領域・10の姿は、選択したPracticeで満たされています。ここで止めても、さらにPracticeを追加しても構いません。
+          </div>
+        ) : requiredImpactAbilities.length > 0 ? (
+          <div className="impact-alert-box">
+            残りAbilityスコアは {impactRemainingTotal} です。未充足AbilityにヒットするPracticeを上位に表示しています。
+          </div>
+        ) : null}
+
+        <div className="impact-two-column">
+          <div className="impact-ability-card">
+            <div className="overview-card-header">
+              <h3>月間計画から導かれる5領域・10の姿</h3>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  void loadOverviewPlans();
+                  void loadImpactPracticeData();
+                }}
+                disabled={overviewLoading || impactLoading}
+              >
+                再読み込み
+              </button>
+            </div>
+            <p className="muted">
+              月間計画で選択されたPlanPhraseをAbilityへ展開し、選択済みPracticeのAbilityで消し込んでいます。
+            </p>
+
+            {approvedMonthlyPlans.length === 0 ? (
+              <p className="muted">承認済み月間計画がありません。先に月間計画を承認してください。</p>
+            ) : requiredImpactAbilities.length === 0 ? (
+              <p className="muted">選択中の月間計画からAbilityを取得できません。</p>
+            ) : (
+              <div className="impact-ability-list">
+                {impactCoverageRows.map((row) => {
+                  const ratio = row.requiredScore <= 0 ? 100 : Math.min(100, Math.round((row.coveredScore / row.requiredScore) * 100));
+                  return (
+                    <div
+                      className={`impact-ability-row ${row.remainingScore === 0 ? "impact-ability-row-complete" : ""}`}
+                      key={row.abilityCode}
+                    >
+                      <div className="impact-ability-head">
+                        <div>
+                          <strong>{row.abilityCode} {row.label}</strong>
+                          <span>{row.areaLabel}</span>
+                        </div>
+                        <b>{row.remainingScore === 0 ? "OK" : `残 ${row.remainingScore}`}</b>
+                      </div>
+                      <div className="coverage-bar-track">
+                        <div className="coverage-bar" style={{ width: `${Math.max(4, ratio)}%` }} />
+                      </div>
+                      <small>必要 {row.requiredScore} / 充足 {row.coveredScore}</small>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="impact-selected-card">
+            <h3>選択済みPractice</h3>
+            {selectedImpactPracticeRows.length === 0 ? (
+              <p className="muted">まだPracticeが選択されていません。</p>
+            ) : (
+              <div className="impact-selected-list">
+                {selectedImpactPracticeRows.map((row) => (
+                  <div key={`selected-${row.practiceCode}`} className="impact-selected-item">
+                    <strong>{s(row.practice.name) || row.practiceCode}</strong>
+                    <span>{row.practiceCode}</span>
+                    <small>
+                      {row.matchedRequiredLabels.length > 0 ? row.matchedRequiredLabels.join("、") : "直接リンクなし"}
+                    </small>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSaveImpactAnalysis}
+              disabled={impactSaving || !selectedImpactItem}
+            >
+              {impactSaving ? "保存中..." : "ImpactAnalysisに保存"}
+            </button>
+          </div>
+        </div>
+
+        <div className="impact-practice-card">
+          <div className="overview-card-header">
+            <h3>Practice候補一覧</h3>
+            <span className="muted">Practiceカテゴリでは絞らず、年齢・実施月だけで抽出しています。</span>
+          </div>
+
+          {impactLoading ? (
+            <p className="muted">Practice候補を読み込み中...</p>
+          ) : impactCandidateRows.length === 0 ? (
+            <p className="muted">対象年齢・対象月に合うPracticeがありません。</p>
+          ) : (
+            <div className="impact-practice-list">
+              {impactCandidateRows.map((row) => {
+                const checked = selectedImpactPracticeCodeSet.has(row.practiceCode);
+                return (
+                  <div
+                    className={`impact-practice-row ${checked ? "impact-practice-row-selected" : ""}`}
+                    key={row.practiceCode}
+                  >
+                    <label className="impact-practice-check">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={impactSaving}
+                        onChange={(event) => toggleImpactPractice(row.practiceCode, event.target.checked)}
+                      />
+                      <span>選択</span>
+                    </label>
+
+                    <div className="impact-practice-main">
+                      <div className="impact-practice-title">
+                        <strong>{s(row.practice.name) || row.practiceCode}</strong>
+                        <span>{row.practiceCode}</span>
+                      </div>
+                      <p>{s(row.practice.memo) || s(row.practice.transcriptText) || "説明未登録"}</p>
+                      <div className="impact-practice-tags">
+                        <span>{practiceCategoryLabel(s(row.practice.practiceCategory) || s(row.practice.category_name))}</span>
+                        <span>{practiceTargetAgeLabel(row.practice)}</span>
+                        <span>{practiceSeasonalityLabel(row.practice)}</span>
+                        <span>未充足ヒット {row.uncoveredScore}</span>
+                        <span>関連スコア {row.potentialScore}</span>
+                      </div>
+                      <div className="phrase-ability-tags">
+                        {row.matchedRequiredLabels.length > 0 ? (
+                          row.matchedRequiredLabels.map((label) => (
+                            <span key={`${row.practiceCode}-${label}`}>{label}</span>
+                          ))
+                        ) : (
+                          <span>月間計画Abilityとの直接リンクなし</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -1399,6 +2357,17 @@ export default function PlanWorkspacePanel(props: Props) {
           disabled={workspaceView === "overview"}
         >
           中長期計画俯瞰
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setWorkspaceView("impact");
+            void loadOverviewPlans();
+            void loadImpactPracticeData();
+          }}
+          disabled={workspaceView === "impact"}
+        >
+          インパクト分析
         </button>
       </div>
 
@@ -1523,7 +2492,9 @@ export default function PlanWorkspacePanel(props: Props) {
           </>
         ) : (
           <div className="plan-control-note">
-            年間・期・月間計画の保存済みPlanDocumentをまとめて集計します。
+            {workspaceView === "overview"
+              ? "年間・期・月間計画の保存済みPlanDocumentをまとめて集計します。"
+              : "承認済み月間計画から必要Abilityを取り出し、Practice選択で消し込みます。"}
           </div>
         )}
       </div>
@@ -1743,7 +2714,7 @@ export default function PlanWorkspacePanel(props: Props) {
             </div>
           </div>
         </>
-      ) : (
+      ) : workspaceView === "overview" ? (
         <div className="plan-overview-section">
           <div className="plan-summary-row">
             <div>
@@ -1848,6 +2819,8 @@ export default function PlanWorkspacePanel(props: Props) {
             )}
           </div>
         </div>
+      ) : (
+        renderImpactSection()
       )}
     </div>
   );

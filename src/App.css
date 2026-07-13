@@ -737,3 +737,237 @@ h1 {
     justify-content: flex-start;
   }
 }
+
+/* Plan Workspace Phase 5-A2: monthly plan ability coverage by Practice */
+.impact-section {
+  display: grid;
+  gap: 18px;
+}
+
+.impact-summary-card,
+.impact-plan-selector-card,
+.impact-ability-card,
+.impact-selected-card,
+.impact-practice-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid #e3ebe5;
+  background: #fcfdfc;
+}
+
+.impact-summary-card {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: #f7faf8;
+}
+
+.impact-summary-card div,
+.impact-plan-meta div {
+  display: grid;
+  gap: 4px;
+}
+
+.impact-summary-card strong,
+.impact-plan-meta strong,
+.impact-plan-selector-card label span,
+.impact-practice-actions span {
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.impact-summary-card span,
+.impact-plan-meta span {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.impact-complete-text {
+  color: #166534;
+}
+
+.impact-alert-box {
+  color: #854d0e;
+  background: #fef9c3;
+  border: 1px solid #fde68a;
+  border-radius: 12px;
+  padding: 12px;
+  line-height: 1.7;
+  font-weight: 700;
+}
+
+.impact-plan-selector-card label {
+  display: grid;
+  gap: 6px;
+}
+
+.impact-plan-selector-card select,
+.impact-practice-actions select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d8e2dc;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: white;
+  color: #1f2933;
+  font: inherit;
+}
+
+.impact-plan-meta {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1.4fr 0.7fr 0.9fr;
+  padding: 12px;
+  border-radius: 14px;
+  background: #f7faf8;
+  border: 1px solid #e3ebe5;
+}
+
+.impact-two-column {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(300px, 0.95fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.impact-ability-list,
+.impact-selected-list,
+.impact-practice-list {
+  display: grid;
+  gap: 10px;
+}
+
+.impact-ability-row,
+.impact-selected-item,
+.impact-practice-row {
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: white;
+}
+
+.impact-ability-row {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.impact-ability-row-complete {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.impact-ability-head {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.impact-ability-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.impact-ability-head span,
+.impact-ability-row small,
+.impact-selected-item span,
+.impact-selected-item small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.impact-ability-head b {
+  color: #2f6f5e;
+  white-space: nowrap;
+}
+
+.impact-selected-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+}
+
+.impact-practice-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  align-items: start;
+}
+
+.impact-practice-row-selected {
+  border-color: #86c5ad;
+  background: #f0f8f4;
+}
+
+.impact-practice-check,
+.impact-apply-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 800;
+}
+
+.impact-practice-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.impact-practice-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.impact-practice-title span {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.impact-practice-main p {
+  margin: 0;
+  color: #374151;
+  line-height: 1.7;
+  max-height: 5.1em;
+  overflow: auto;
+}
+
+.impact-practice-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.impact-practice-tags span {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #eef4f0;
+  color: #52616b;
+  font-weight: 700;
+}
+
+.impact-practice-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.impact-practice-actions label:first-child {
+  display: grid;
+  gap: 6px;
+}
+
+@media (max-width: 900px) {
+  .impact-summary-card,
+  .impact-plan-meta,
+  .impact-two-column,
+  .impact-practice-row {
+    grid-template-columns: 1fr;
+  }
+}

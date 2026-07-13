@@ -260,12 +260,20 @@ async function listAll<T, TArgs>(
 }
 
 function practiceVisibleForTenant(
-  row: { tenantId?: string | null },
+  row: { tenantId?: string | null; publishScope?: string | null; visibility?: string | null },
   targetTenantId: string,
 ): boolean {
   const rowTenantId = s(row.tenantId);
+  const publishScope = s(row.publishScope).toLowerCase();
+  const visibility = s(row.visibility).toLowerCase();
+
   if (!targetTenantId) return true;
-  return !rowTenantId || rowTenantId === targetTenantId;
+  if (!rowTenantId || rowTenantId === targetTenantId) return true;
+  if (rowTenantId === "global" || rowTenantId === "common") return true;
+
+  // PracticeCode keeps tenantId for the registering tenant, while
+  // publishScope=global means it should be searchable as a common practice.
+  return publishScope === "global" || (visibility === "public" && publishScope === "global");
 }
 
 function suggestionVisibleForTenant(
