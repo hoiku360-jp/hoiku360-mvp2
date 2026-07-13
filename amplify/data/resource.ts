@@ -357,6 +357,156 @@ AbilityPracticeAgg: a
   .authorization((allow) => [
     allow.authenticated().to(["create", "read", "update", "delete"]),
   ]),
+
+
+  /**
+   * Phase 3:
+   * Plan document.
+   *
+   * One flexible model covers:
+   * - LONG_TERM: ANNUAL / TERM / MONTHLY
+   * - SHORT_TERM: WEEKLY / DAILY
+   *
+   * JSON payload fields are stored as strings on purpose.
+   * This avoids AWSJSON variable formatting issues and keeps the model stable
+   * while the plan content structure evolves.
+   */
+  PlanDocument: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+
+      classroomId: a.id(),
+
+      planLevel: a.string().required(), // LONG_TERM / SHORT_TERM
+      planKind: a.string().required(), // ANNUAL / TERM / MONTHLY / WEEKLY / DAILY
+
+      status: a.string().required(), // DRAFT / CONFIRMED / ARCHIVED
+
+      periodStartDate: a.date().required(),
+      periodEndDate: a.date().required(),
+
+      title: a.string(),
+
+      sourcePlanId: a.id(),
+      sourceImpactAnalysisIdsJson: a.string(),
+
+      contentJson: a.string(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
+   * Phase 3:
+   * Impact analysis.
+   *
+   * This is the generalized successor concept to "environment impact".
+   * It can analyze environment composition, outdoor play, indoor play,
+   * practice activity, or a staff / classroom practice portfolio.
+   */
+  ImpactAnalysis: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+
+      scopeType: a.string().required(), // TENANT / CLASSROOM / STAFF / PLAN
+      classroomId: a.id(),
+      staffUserId: a.id(),
+
+      targetKind: a.string().required(), // ENVIRONMENT / OUTDOOR_PLAY / INDOOR_PLAY / PRACTICE_ACTIVITY / PRACTICE_PORTFOLIO
+
+      status: a.string().required(), // DRAFT / CONFIRMED / ARCHIVED
+
+      sourcePlanId: a.id(),
+
+      periodStartDate: a.date(),
+      periodEndDate: a.date(),
+
+      title: a.string(),
+
+      inputJson: a.string(),
+      resultJson: a.string(),
+      selectedJson: a.string(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
+   * Phase 3:
+   * Plan phrase master.
+   *
+   * Seed from MVP1 PlanPhrase.csv.
+   * This lets teachers choose candidate plan phrases instead of writing
+   * long-term / monthly plan text from scratch.
+   *
+   * MVP2 intentionally starts without secondary indexes here.
+   * The seed currently has only a few hundred rows, so the first UI can list
+   * and filter on the client side. Add indexes only after access patterns are
+   * confirmed.
+   */
+  PlanPhrase: a
+    .model({
+      planPhraseId: a.string().required(),
+      planPeriodType: a.string().required(), // YEAR / TERM / MONTH
+      domainCode: a.string().required(), // YEAR/TERM: 0, MONTH: 11 / 21 / 31 / 41 / 51
+      domain: a.string().required(), // YEAR/TERM: 総合, MONTH: 健康 / 人間関係 / 環境 / 言葉 / 表現
+      ageYears: a.integer().required(), // 3 / 4 / 5
+      phraseNo: a.integer(),
+      phraseType: a.string(), // 年間計画 / 4〜6月のねらい / 月のねらい など
+      phraseText: a.string().required(),
+      source: a.string(),
+      status: a.string().required(), // active / archived
+      sortOrder: a.integer(),
+      note: a.string(),
+    })
+    .identifier(["planPhraseId"])
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
+   * Phase 3:
+   * Plan phrase to Ability link master.
+   *
+   * Seed from MVP1 PlanPhraseAbilityLink.csv.
+   * This connects phrase candidates to 5 areas / 10 postures / leaf abilities.
+   */
+  PlanPhraseAbilityLink: a
+    .model({
+      linkId: a.string().required(),
+      planPhraseId: a.string().required(),
+
+      planPeriodType: a.string().required(), // YEAR / TERM / MONTH
+      phraseDomainCode: a.string(), // YEAR/TERM: 0, MONTH: 11 / 21 / 31 / 41 / 51
+      phraseDomain: a.string(), // YEAR/TERM: 総合, MONTH: 健康 / 人間関係 / 環境 / 言葉 / 表現
+      ageYears: a.integer(),
+      phraseNo: a.integer(),
+
+      abilityCode: a.string().required(),
+      abilityDomain: a.string(),
+      categoryCode: a.string(),
+      categoryName: a.string(),
+      abilityName: a.string(),
+
+      relationType: a.string(), // PRIMARY / RELATED / YEAR_DIRECTION / TERM_DIRECTION
+      weight: a.integer().required(),
+      status: a.string().required(), // active / archived
+      sortOrder: a.integer(),
+      note: a.string(),
+    })
+    .identifier(["linkId"])
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
   
     /**
    * Phase 1-A:

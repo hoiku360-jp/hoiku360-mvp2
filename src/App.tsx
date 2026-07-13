@@ -11,8 +11,11 @@ import userSubMapCsv from "./seed/data/UserSubMap.csv?raw";
 import abilityCodesLangCsv from "./seed/data/ability_codes_lang.csv?raw";
 import childCsv from "./seed/data/Child.csv?raw";
 import childClassroomEnrollmentCsv from "./seed/data/ChildClassroomEnrollment.csv?raw";
+import planPhraseCsv from "./seed/data/PlanPhrase.csv?raw";
+import planPhraseAbilityLinkCsv from "./seed/data/PlanPhraseAbilityLink.csv?raw";
 import PracticeRegisterPanel from "./features/practice-register/PracticeRegisterPanel";
 import PracticeSearchPanel from "./features/practice/PracticeSearchPanel";
+import PlanWorkspacePanel from "./features/plan/PlanWorkspacePanel";
 import "./App.css";
 
 const rawClient = generateClient<Schema>({
@@ -36,6 +39,17 @@ type ModelApi<T, CreateInput extends Record<string, unknown>> = {
   list(args?: { filter?: Record<string, unknown> }): ModelListResult<T>;
   create(input: CreateInput): ModelGetResult<T>;
   update(input: CreateInput & { id: string }): ModelGetResult<T>;
+};
+
+type ModelIdentifierApi<
+  T,
+  CreateInput extends Record<string, unknown>,
+  GetArgs extends Record<string, unknown>
+> = {
+  get(args: GetArgs): ModelGetResult<T>;
+  list(args?: { filter?: Record<string, unknown> }): ModelListResult<T>;
+  create(input: CreateInput): ModelGetResult<T>;
+  update(input: CreateInput): ModelGetResult<T>;
 };
 
 type TenantRecord = {
@@ -146,6 +160,41 @@ type StaffAssignmentRecord = {
   status: string;
 };
 
+type PlanPhraseRecord = {
+  planPhraseId: string;
+  planPeriodType: string;
+  domainCode: string;
+  domain: string;
+  ageYears: number;
+  phraseNo?: number | null;
+  phraseType?: string | null;
+  phraseText: string;
+  source?: string | null;
+  status: string;
+  sortOrder?: number | null;
+  note?: string | null;
+};
+
+type PlanPhraseAbilityLinkRecord = {
+  linkId: string;
+  planPhraseId: string;
+  planPeriodType: string;
+  phraseDomainCode?: string | null;
+  phraseDomain?: string | null;
+  ageYears?: number | null;
+  phraseNo?: number | null;
+  abilityCode: string;
+  abilityDomain?: string | null;
+  categoryCode?: string | null;
+  categoryName?: string | null;
+  abilityName?: string | null;
+  relationType?: string | null;
+  weight: number;
+  status: string;
+  sortOrder?: number | null;
+  note?: string | null;
+};
+
 type TenantCreateInput = {
   id?: string;
   name: string;
@@ -182,6 +231,41 @@ type StaffAssignmentCreateInput = {
   status: string;
 };
 
+type PlanPhraseCreateInput = {
+  planPhraseId: string;
+  planPeriodType: string;
+  domainCode: string;
+  domain: string;
+  ageYears: number;
+  phraseNo?: number;
+  phraseType?: string;
+  phraseText: string;
+  source?: string;
+  status: string;
+  sortOrder?: number;
+  note?: string;
+};
+
+type PlanPhraseAbilityLinkCreateInput = {
+  linkId: string;
+  planPhraseId: string;
+  planPeriodType: string;
+  phraseDomainCode?: string;
+  phraseDomain?: string;
+  ageYears?: number;
+  phraseNo?: number;
+  abilityCode: string;
+  abilityDomain?: string;
+  categoryCode?: string;
+  categoryName?: string;
+  abilityName?: string;
+  relationType?: string;
+  weight: number;
+  status: string;
+  sortOrder?: number;
+  note?: string;
+};
+
 const client = rawClient as unknown as {
   models: {
     Tenant: ModelApi<TenantRecord, TenantCreateInput>;
@@ -193,6 +277,16 @@ const client = rawClient as unknown as {
     ChildClassroomEnrollment: ModelApi<
       ChildClassroomEnrollmentRecord,
       ChildClassroomEnrollmentCreateInput
+    >;
+    PlanPhrase: ModelIdentifierApi<
+      PlanPhraseRecord,
+      PlanPhraseCreateInput,
+      { planPhraseId: string }
+    >;
+    PlanPhraseAbilityLink: ModelIdentifierApi<
+      PlanPhraseAbilityLinkRecord,
+      PlanPhraseAbilityLinkCreateInput,
+      { linkId: string }
     >;
   };
 };
@@ -208,7 +302,7 @@ type AppUserContext = {
   classroomNames: string[];
 };
 
-type TabKey = "home" | "practiceRegister" | "practiceSearch";
+type TabKey = "home" | "planWorkspace" | "practiceRegister" | "practiceSearch";
 
 type SeedSummary = {
   tenantCount: number;
@@ -218,6 +312,8 @@ type SeedSummary = {
   abilityCodeCount: number;
   childCount: number;
   childClassroomEnrollmentCount: number;
+  planPhraseCount: number;
+  planPhraseAbilityLinkCount: number;
 };
 
 type ClassroomChildSummary = {
@@ -618,6 +714,85 @@ async function seedChildClassroomEnrollments(userSub: string, username: string) 
   return rows.length;
 }
 
+async function upsertPlanPhrase(input: PlanPhraseCreateInput) {
+  const existing = await client.models.PlanPhrase.get({
+    planPhraseId: input.planPhraseId,
+  });
+
+  if (existing.data) {
+    return client.models.PlanPhrase.update(input);
+  }
+
+  return client.models.PlanPhrase.create(input);
+}
+
+async function upsertPlanPhraseAbilityLink(
+  input: PlanPhraseAbilityLinkCreateInput
+) {
+  const existing = await client.models.PlanPhraseAbilityLink.get({
+    linkId: input.linkId,
+  });
+
+  if (existing.data) {
+    return client.models.PlanPhraseAbilityLink.update(input);
+  }
+
+  return client.models.PlanPhraseAbilityLink.create(input);
+}
+
+async function seedPlanPhrases(userSub: string, username: string) {
+  const rows = parseCsv(planPhraseCsv);
+
+  for (const row of rows) {
+    await upsertPlanPhrase({
+      planPhraseId: requiredSeedValue(row, "planPhraseId", userSub, username),
+      planPeriodType: requiredSeedValue(row, "planPeriodType", userSub, username),
+      domainCode: requiredSeedValue(row, "domainCode", userSub, username),
+      domain: requiredSeedValue(row, "domain", userSub, username),
+      ageYears: requiredSeedNumber(row, "ageYears", userSub, username),
+      phraseNo: optionalSeedNumber(row, "phraseNo", userSub, username),
+      phraseType: optionalSeedValue(row.phraseType, userSub, username),
+      phraseText: requiredSeedValue(row, "phraseText", userSub, username),
+      source: optionalSeedValue(row.source, userSub, username),
+      status:
+        optionalSeedValue(row.status, userSub, username) ?? "active",
+      sortOrder: optionalSeedNumber(row, "sortOrder", userSub, username),
+      note: optionalSeedValue(row.note, userSub, username),
+    });
+  }
+
+  return rows.length;
+}
+
+async function seedPlanPhraseAbilityLinks(userSub: string, username: string) {
+  const rows = parseCsv(planPhraseAbilityLinkCsv);
+
+  for (const row of rows) {
+    await upsertPlanPhraseAbilityLink({
+      linkId: requiredSeedValue(row, "linkId", userSub, username),
+      planPhraseId: requiredSeedValue(row, "planPhraseId", userSub, username),
+      planPeriodType: requiredSeedValue(row, "planPeriodType", userSub, username),
+      phraseDomainCode: optionalSeedValue(row.phraseDomainCode, userSub, username),
+      phraseDomain: optionalSeedValue(row.phraseDomain, userSub, username),
+      ageYears: optionalSeedNumber(row, "ageYears", userSub, username),
+      phraseNo: optionalSeedNumber(row, "phraseNo", userSub, username),
+      abilityCode: requiredSeedValue(row, "abilityCode", userSub, username),
+      abilityDomain: optionalSeedValue(row.abilityDomain, userSub, username),
+      categoryCode: optionalSeedValue(row.categoryCode, userSub, username),
+      categoryName: optionalSeedValue(row.categoryName, userSub, username),
+      abilityName: optionalSeedValue(row.abilityName, userSub, username),
+      relationType: optionalSeedValue(row.relationType, userSub, username),
+      weight: requiredSeedNumber(row, "weight", userSub, username),
+      status:
+        optionalSeedValue(row.status, userSub, username) ?? "active",
+      sortOrder: optionalSeedNumber(row, "sortOrder", userSub, username),
+      note: optionalSeedValue(row.note, userSub, username),
+    });
+  }
+
+  return rows.length;
+}
+
 function SignedInHome({ signOut }: { signOut?: () => void }) {
   const [tab, setTab] = useState<TabKey>("home");
   const [status, setStatus] = useState<string>("読み込み中...");
@@ -791,6 +966,11 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
         userSub,
         username
       );
+      const planPhraseCount = await seedPlanPhrases(userSub, username);
+      const planPhraseAbilityLinkCount = await seedPlanPhraseAbilityLinks(
+        userSub,
+        username
+      );
 
       setSeedSummary({
         tenantCount,
@@ -800,6 +980,8 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
         abilityCodeCount,
         childCount,
         childClassroomEnrollmentCount,
+        planPhraseCount,
+        planPhraseAbilityLinkCount,
       });
 
       await loadContext();
@@ -814,6 +996,8 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
           `AbilityCode=${abilityCodeCount}`,
           `Child=${childCount}`,
           `ChildClassroomEnrollment=${childClassroomEnrollmentCount}`,
+          `PlanPhrase=${planPhraseCount}`,
+          `PlanPhraseAbilityLink=${planPhraseAbilityLinkCount}`,
         ].join(" ")
       );
 
@@ -881,6 +1065,14 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
 
           <button
             type="button"
+            onClick={() => setTab("planWorkspace")}
+            disabled={!context?.tenantId || tab === "planWorkspace"}
+          >
+            Plan Workspace
+          </button>
+
+          <button
+            type="button"
             onClick={() => setTab("practiceRegister")}
             disabled={!context?.tenantId || tab === "practiceRegister"}
           >
@@ -898,10 +1090,24 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
 
         {!context?.tenantId && (
           <p className="muted">
-            Practice機能を使うには、先にCSV seedを実行して UserProfile / tenantId を作成してください。
+            Plan / Practice機能を使うには、先にCSV seedを実行して UserProfile / tenantId を作成してください。
           </p>
         )}
       </section>
+
+      {tab === "planWorkspace" && context?.tenantId && (
+        <section className="panel">
+          <PlanWorkspacePanel
+            owner={practiceOwner}
+            tenantId={practiceTenantId}
+            tenantName={context.tenantName}
+            fiscalYear={CURRENT_FISCAL_YEAR}
+            currentClassroomId={currentClassroomId}
+            allowedClassroomIds={context.classroomIds}
+            isSchoolScope={isSchoolScope}
+          />
+        </section>
+      )}
 
       {tab === "practiceRegister" && context?.tenantId && (
         <section className="panel">
@@ -948,6 +1154,12 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
 
             <dt>ChildClassroomEnrollment</dt>
             <dd>{seedSummary.childClassroomEnrollmentCount}</dd>
+
+            <dt>PlanPhrase</dt>
+            <dd>{seedSummary.planPhraseCount}</dd>
+
+            <dt>PlanPhraseAbilityLink</dt>
+            <dd>{seedSummary.planPhraseAbilityLinkCount}</dd>
           </dl>
         </section>
       )}
