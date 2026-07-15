@@ -13,6 +13,7 @@ import childCsv from "./seed/data/Child.csv?raw";
 import childClassroomEnrollmentCsv from "./seed/data/ChildClassroomEnrollment.csv?raw";
 import planPhraseCsv from "./seed/data/PlanPhrase.csv?raw";
 import planPhraseAbilityLinkCsv from "./seed/data/PlanPhraseAbilityLink.csv?raw";
+import abilityObservationHintCsv from "./seed/data/AbilityObservationHint.csv?raw";
 import PracticeRegisterPanel from "./features/practice-register/PracticeRegisterPanel";
 import PracticeSearchPanel from "./features/practice/PracticeSearchPanel";
 import PlanWorkspacePanel from "./features/plan/PlanWorkspacePanel";
@@ -195,6 +196,19 @@ type PlanPhraseAbilityLinkRecord = {
   note?: string | null;
 };
 
+
+type AbilityObservationHintRecord = {
+  id: string;
+  abilityCode: string;
+  abilityName: string;
+  startingAge: number;
+  hintNo: number;
+  episode1?: string | null;
+  episode2?: string | null;
+  episode3?: string | null;
+  isActive: boolean;
+};
+
 type TenantCreateInput = {
   id?: string;
   name: string;
@@ -266,6 +280,19 @@ type PlanPhraseAbilityLinkCreateInput = {
   note?: string;
 };
 
+
+type AbilityObservationHintCreateInput = {
+  id?: string;
+  abilityCode: string;
+  abilityName: string;
+  startingAge: number;
+  hintNo: number;
+  episode1?: string;
+  episode2?: string;
+  episode3?: string;
+  isActive: boolean;
+};
+
 const client = rawClient as unknown as {
   models: {
     Tenant: ModelApi<TenantRecord, TenantCreateInput>;
@@ -287,6 +314,10 @@ const client = rawClient as unknown as {
       PlanPhraseAbilityLinkRecord,
       PlanPhraseAbilityLinkCreateInput,
       { linkId: string }
+    >;
+    AbilityObservationHint: ModelApi<
+      AbilityObservationHintRecord,
+      AbilityObservationHintCreateInput
     >;
   };
 };
@@ -314,6 +345,7 @@ type SeedSummary = {
   childClassroomEnrollmentCount: number;
   planPhraseCount: number;
   planPhraseAbilityLinkCount: number;
+  abilityObservationHintCount: number;
 };
 
 type ClassroomChildSummary = {
@@ -793,6 +825,43 @@ async function seedPlanPhraseAbilityLinks(userSub: string, username: string) {
   return rows.length;
 }
 
+
+function abilityObservationHintId(
+  abilityCode: string,
+  startingAge: number,
+  hintNo: number
+): string {
+  return `${abilityCode}-${startingAge}-${String(hintNo).padStart(2, "0")}`;
+}
+
+async function seedAbilityObservationHints(userSub: string, username: string) {
+  const rows = parseCsv(abilityObservationHintCsv);
+  const counters = new Map<string, number>();
+
+  for (const row of rows) {
+    const abilityCode = requiredSeedValue(row, "abilityCode", userSub, username);
+    const startingAge = requiredSeedNumber(row, "startingAge", userSub, username);
+    const counterKey = `${abilityCode}-${startingAge}`;
+    const hintNo = (counters.get(counterKey) ?? 0) + 1;
+    counters.set(counterKey, hintNo);
+
+    await upsertModel(client.models.AbilityObservationHint, {
+      id: abilityObservationHintId(abilityCode, startingAge, hintNo),
+      abilityCode,
+      abilityName: requiredSeedValue(row, "abilityName", userSub, username),
+      startingAge,
+      hintNo,
+      episode1: optionalSeedValue(row.episode1, userSub, username),
+      episode2: optionalSeedValue(row.episode2, userSub, username),
+      episode3: optionalSeedValue(row.episode3, userSub, username),
+      isActive: true,
+    });
+  }
+
+  return rows.length;
+}
+
+
 function SignedInHome({ signOut }: { signOut?: () => void }) {
   const [tab, setTab] = useState<TabKey>("home");
   const [status, setStatus] = useState<string>("読み込み中...");
@@ -971,6 +1040,10 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
         userSub,
         username
       );
+      const abilityObservationHintCount = await seedAbilityObservationHints(
+        userSub,
+        username
+      );
 
       setSeedSummary({
         tenantCount,
@@ -982,6 +1055,7 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
         childClassroomEnrollmentCount,
         planPhraseCount,
         planPhraseAbilityLinkCount,
+        abilityObservationHintCount,
       });
 
       await loadContext();
@@ -998,6 +1072,7 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
           `ChildClassroomEnrollment=${childClassroomEnrollmentCount}`,
           `PlanPhrase=${planPhraseCount}`,
           `PlanPhraseAbilityLink=${planPhraseAbilityLinkCount}`,
+          `AbilityObservationHint=${abilityObservationHintCount}`,
         ].join(" ")
       );
 
@@ -1160,6 +1235,9 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
 
             <dt>PlanPhraseAbilityLink</dt>
             <dd>{seedSummary.planPhraseAbilityLinkCount}</dd>
+
+            <dt>AbilityObservationHint</dt>
+            <dd>{seedSummary.abilityObservationHintCount}</dd>
           </dl>
         </section>
       )}

@@ -971,3 +971,532 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+
+/* Plan Workspace Phase 7-A: weekly practice allocation */
+.weekly-section {
+  display: grid;
+  gap: 18px;
+}
+
+.weekly-summary-card,
+.weekly-selector-card,
+.weekly-policy-card,
+.weekly-calendar-card,
+.weekly-side-card,
+.weekly-comparison-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid #e3ebe5;
+  background: #fcfdfc;
+}
+
+.weekly-summary-card {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: #f7faf8;
+}
+
+.weekly-summary-card div {
+  display: grid;
+  gap: 4px;
+}
+
+.weekly-summary-card strong,
+.weekly-selector-card label span,
+.weekly-day-row label span,
+.weekly-policy-card strong {
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.weekly-summary-card span {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.weekly-selector-card {
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1.1fr) minmax(0, 0.95fr);
+}
+
+.weekly-selector-card label,
+.weekly-day-row label {
+  display: grid;
+  gap: 6px;
+}
+
+.weekly-selector-card select,
+.weekly-day-row select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d8e2dc;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: white;
+  color: #1f2933;
+  font: inherit;
+}
+
+.weekly-policy-card {
+  background: #f7faf8;
+  line-height: 1.7;
+}
+
+.weekly-policy-card span {
+  color: #52616b;
+}
+
+.weekly-two-column {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.weekly-day-list,
+.weekly-practice-chip-list,
+.weekly-comparison-list {
+  display: grid;
+  gap: 10px;
+}
+
+.weekly-day-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.7fr) minmax(220px, 1fr) minmax(220px, 1fr);
+  gap: 12px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: white;
+}
+
+.weekly-day-label {
+  display: grid;
+  gap: 4px;
+}
+
+.weekly-day-label span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.weekly-practice-chip {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  background: white;
+}
+
+.weekly-practice-chip-assigned {
+  border-color: #86c5ad;
+  background: #f0f8f4;
+}
+
+.weekly-practice-chip span {
+  color: #6b7280;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.weekly-comparison-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(240px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  background: white;
+}
+
+.weekly-comparison-row > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.weekly-comparison-row > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.weekly-comparison-row span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.weekly-comparison-row b {
+  white-space: nowrap;
+}
+
+.weekly-comparison-ok {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.weekly-comparison-low {
+  border-color: #fde68a;
+  background: #fefce8;
+}
+
+.weekly-comparison-high {
+  border-color: #bae6fd;
+  background: #f0f9ff;
+}
+
+@media (max-width: 900px) {
+  .weekly-summary-card,
+  .weekly-selector-card,
+  .weekly-two-column,
+  .weekly-day-row,
+  .weekly-comparison-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Plan Workspace Phase 7-A fix1: weekly month overview and coverage */
+.weekly-selector-card-two {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+}
+
+.weekly-week-list-card,
+.weekly-coverage-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid #e3ebe5;
+  background: #fcfdfc;
+}
+
+.weekly-week-list-card h3,
+.weekly-coverage-card h4 {
+  margin: 0;
+}
+
+.weekly-week-list {
+  display: grid;
+  gap: 10px;
+}
+
+.weekly-week-item {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(160px, 0.7fr) minmax(220px, 0.9fr);
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 12px;
+  background: white;
+  color: #1f2933;
+  text-align: left;
+}
+
+.weekly-week-item:hover:not(:disabled) {
+  border-color: #86c5ad;
+  background: #f7faf8;
+}
+
+.weekly-week-item-selected {
+  border-color: #2f6f5e;
+  background: #f0f8f4;
+  box-shadow: 0 0 0 2px rgba(47, 111, 94, 0.1);
+}
+
+.weekly-week-item span {
+  display: grid;
+  gap: 4px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.weekly-week-item strong {
+  color: #52616b;
+  font-size: 12px;
+}
+
+.weekly-coverage-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.weekly-current-week-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 14px;
+  background: #f7faf8;
+  border: 1px solid #e3ebe5;
+  color: #52616b;
+}
+
+.weekly-current-week-note strong {
+  color: #2f6f5e;
+}
+
+.weekly-current-week-note span {
+  font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .weekly-selector-card-two,
+  .weekly-week-item,
+  .weekly-coverage-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Plan Workspace Phase 7-A2: weekly approval */
+.weekly-review-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid #e3ebe5;
+  background: #f7faf8;
+}
+
+.weekly-review-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.weekly-review-status-row strong,
+.weekly-review-comment-label span {
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.weekly-review-comment-label {
+  display: grid;
+  gap: 6px;
+}
+
+.weekly-review-button-row {
+  justify-content: flex-start;
+}
+
+.weekly-review-message-list {
+  margin-top: 0;
+}
+
+.weekly-week-item .status-pill {
+  justify-self: start;
+}
+
+
+/* Plan Workspace Phase 7-B: daily plan manual issuance */
+.status-issued {
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.daily-section {
+  display: grid;
+  gap: 18px;
+}
+
+.daily-summary-card,
+.daily-selector-card,
+.daily-policy-card,
+.daily-preview-card,
+.daily-issue-card,
+.daily-hint-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid #e3ebe5;
+  background: #fcfdfc;
+}
+
+.daily-summary-card {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: #f7faf8;
+}
+
+.daily-summary-card div {
+  display: grid;
+  gap: 4px;
+}
+
+.daily-summary-card strong,
+.daily-selector-card label span,
+.daily-policy-card strong,
+.daily-preview-item strong,
+.daily-issue-detail dt,
+.daily-hint-head span {
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.daily-summary-card span {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.daily-selector-card {
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.85fr) auto;
+  align-items: end;
+}
+
+.daily-selector-card label {
+  display: grid;
+  gap: 6px;
+}
+
+.daily-selector-card select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d8e2dc;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: white;
+  color: #1f2933;
+  font: inherit;
+}
+
+.daily-policy-card {
+  background: #f7faf8;
+  line-height: 1.7;
+}
+
+.daily-policy-card span {
+  color: #52616b;
+}
+
+.daily-two-column {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.daily-preview-list,
+.daily-hint-list {
+  display: grid;
+  gap: 10px;
+}
+
+.daily-preview-item {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: white;
+}
+
+.daily-preview-item span {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.daily-preview-item small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.daily-preview-item p {
+  margin: 0;
+  color: #374151;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.daily-issue-detail {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: #f7faf8;
+  border: 1px solid #e3ebe5;
+}
+
+.daily-issue-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.daily-hint-row {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: white;
+}
+
+.daily-hint-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.daily-hint-head div {
+  display: grid;
+  gap: 4px;
+}
+
+.daily-hint-head strong {
+  color: #2f6f5e;
+}
+
+.daily-episode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.daily-episode-grid div {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 14px;
+  background: #f7faf8;
+  border: 1px solid #e3ebe5;
+}
+
+.daily-episode-grid strong {
+  color: #52616b;
+  font-size: 12px;
+}
+
+.daily-episode-grid p {
+  margin: 0;
+  color: #374151;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 900px) {
+  .daily-summary-card,
+  .daily-selector-card,
+  .daily-two-column,
+  .daily-episode-grid,
+  .daily-issue-detail {
+    grid-template-columns: 1fr;
+  }
+}

@@ -56,6 +56,23 @@ export const registerPracticeLinksFn = defineFunction({
   runtime: 22,
 });
 
+export const issueNextDayDailyPlansFn = defineFunction({
+  name: "issue-next-day-daily-plans",
+  entry: "../functions/issue-next-day-daily-plans/handler.ts",
+  timeoutSeconds: 300,
+  memoryMB: 512,
+  runtime: 22,
+  // Runs at 04:00 UTC = 13:00 JST on weekdays.
+  // Friday's run issues the following Monday's daily plans.
+  schedule: [
+    "0 4 ? * 2 *",
+    "0 4 ? * 3 *",
+    "0 4 ? * 4 *",
+    "0 4 ? * 5 *",
+    "0 4 ? * 6 *",
+  ],
+});
+
 const schema = a.schema({
   Tenant: a
     .model({
@@ -163,6 +180,37 @@ const schema = a.schema({
       note: a.string(),
     })
     .authorization((allow) => [allow.authenticated()]),
+
+
+  /**
+   * Phase 7-B:
+   * Observation hint master for daily plan issuance.
+   *
+   * Seed from AbilityObservationHint.csv.
+   * One ability can have multiple hint rows, and each row has examples for:
+   * - episode1: action / posture
+   * - episode2: words
+   * - episode3: gesture / expression
+   */
+  AbilityObservationHint: a
+    .model({
+      abilityCode: a.string().required(),
+      abilityName: a.string().required(),
+      startingAge: a.integer().required(),
+      hintNo: a.integer().required(),
+      episode1: a.string(),
+      episode2: a.string(),
+      episode3: a.string(),
+      isActive: a.boolean().required(),
+    })
+    .secondaryIndexes((index) => [
+      index("abilityCode")
+        .sortKeys(["startingAge", "hintNo"])
+        .queryField("listObservationHintsByAbility"),
+    ])
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
 
   CleanupTranscriptTextResponse: a.customType({
     originalText: a.string().required(),
@@ -555,6 +603,7 @@ AbilityPracticeAgg: a
    allow.resource(analyzePracticeFn),
    allow.resource(suggestPracticeLinksFn),
    allow.resource(registerPracticeLinksFn),
+   allow.resource(issueNextDayDailyPlansFn),
 ]);
 
 export type Schema = ClientSchema<typeof schema>;

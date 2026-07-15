@@ -7,6 +7,7 @@ import {
   analyzePracticeFn,
   suggestPracticeLinksFn,
   registerPracticeLinksFn,
+  issueNextDayDailyPlansFn,
 } from "./data/resource";
 
 const backend = defineBackend({
@@ -16,6 +17,7 @@ const backend = defineBackend({
   analyzePracticeFn,
   suggestPracticeLinksFn,
   registerPracticeLinksFn,
+  issueNextDayDailyPlansFn,
 });
 
 const bedrockInvokePolicy = new PolicyStatement({
