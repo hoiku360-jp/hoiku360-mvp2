@@ -1586,9 +1586,9 @@ h1 {
 
 .do-practice-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-items: stretch;
 }
 
 .do-practice-card,
@@ -1599,6 +1599,109 @@ h1 {
   border: 1px solid #e3ebe5;
   border-radius: 18px;
   background: #fcfdfc;
+}
+
+.do-day-navigation {
+  position: sticky;
+  top: 12px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #d8e2dc;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 20px rgba(31, 41, 51, 0.08);
+  backdrop-filter: blur(8px);
+}
+
+.do-day-navigation a {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  border: 1px solid #d8e2dc;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #f7faf8;
+  color: #2f6f5e;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.do-day-navigation a:hover,
+.do-day-navigation a:focus-visible {
+  border-color: #86c5ad;
+  background: #f0f8f4;
+  outline: none;
+}
+
+.do-day-navigation a span {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #2f6f5e;
+  color: white;
+  font-size: 12px;
+}
+
+.do-practice-card,
+.do-workflow-card {
+  scroll-margin-top: 88px;
+}
+
+.do-practice-card-primary {
+  border-left: 6px solid #2f6f5e;
+}
+
+.do-practice-card-reserve {
+  border-left: 6px solid #7c8a6f;
+}
+
+.do-practice-heading {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.do-practice-time-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.do-practice-sequence {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #2f6f5e;
+  color: white;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-practice-card-reserve .do-practice-sequence {
+  background: #657157;
+}
+
+.do-practice-time-label {
+  display: inline-flex;
+  width: fit-content;
+  padding: 4px 9px;
+  border: 1px solid #d8e2dc;
+  border-radius: 999px;
+  background: white;
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .do-practice-card-selected {
@@ -2386,5 +2489,30 @@ h1 {
 
   .do-workflow-history-item small {
     white-space: normal;
+  }
+}
+
+
+/* Do / Daily Report: vertical time-flow layout */
+@media (max-width: 720px) {
+  .do-day-navigation {
+    top: 8px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .do-day-navigation a {
+    justify-content: center;
+    padding: 8px 6px;
+    font-size: 12px;
+  }
+
+  .do-day-navigation a span {
+    display: none;
+  }
+
+  .do-practice-card,
+  .do-workflow-card {
+    scroll-margin-top: 82px;
   }
 }

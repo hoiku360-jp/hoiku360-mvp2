@@ -350,6 +350,16 @@ function practiceRoleLabel(role: PracticeRole): string {
   return role === "PRIMARY" ? "主活動" : "予備活動";
 }
 
+function practiceTimeLabel(role: PracticeRole): string {
+  return role === "PRIMARY"
+    ? "主な実施時間帯：午前"
+    : "主な実施時間帯：午後";
+}
+
+function practiceSequenceLabel(role: PracticeRole): string {
+  return role === "PRIMARY" ? "1" : "2";
+}
+
 function s(value: unknown): string {
   return String(value ?? "").trim();
 }
@@ -2328,14 +2338,34 @@ export default function DoWorkspacePanel(props: Props) {
     const formalObservationEdits = observationEdits[role];
     const analyzedHintCodes = parseAnalysisHintCodes(draft.analysisJson);
     const analyzedHintSource = parseAnalysisHintSource(draft.analysisJson);
+    const observationHintByAbilityCode = new Map(
+      practice.observationHints
+        .filter((hint) => hint.abilityCode)
+        .map((hint) => [hint.abilityCode, hint] as const),
+    );
+    const analyzedHintLabels = analyzedHintCodes.map((abilityCode) => {
+      const abilityName = observationHintByAbilityCode.get(abilityCode)?.abilityName;
+      return abilityName ? `${abilityCode} ${abilityName}` : abilityCode;
+    });
 
     return (
       <section
-        className={`do-practice-card ${selected ? "do-practice-card-selected" : ""}`}
+        id={`do-practice-${role.toLowerCase()}`}
+        className={`do-practice-card do-practice-card-${role.toLowerCase()} ${
+          selected ? "do-practice-card-selected" : ""
+        }`}
       >
         <div className="do-practice-card-header">
-          <div>
-            <span className="do-practice-role">{label}</span>
+          <div className="do-practice-heading">
+            <div className="do-practice-time-row">
+              <span className="do-practice-sequence">
+                {practiceSequenceLabel(role)}
+              </span>
+              <span className="do-practice-role">{label}</span>
+              <span className="do-practice-time-label">
+                {practiceTimeLabel(role)}
+              </span>
+            </div>
             <h3>{practice.name || "未配置"}</h3>
             {practice.practiceCode ? <small>{practice.practiceCode}</small> : null}
           </div>
@@ -2522,7 +2552,7 @@ export default function DoWorkspacePanel(props: Props) {
               ) : null}
               {draft.analysisStatus === "ANALYZED" ? (
                 <small className="do-ai-required-note">
-                  解析対象の見届けたい姿Ability: {analyzedHintCodes.length > 0 ? analyzedHintCodes.join("、") : "取得なし"}
+                  解析対象の見届けたい姿Ability: {analyzedHintLabels.length > 0 ? analyzedHintLabels.join("、") : "取得なし"}
                   {analyzedHintSource ? ` / source=${analyzedHintSource}` : ""}
                 </small>
               ) : null}
@@ -2564,16 +2594,25 @@ export default function DoWorkspacePanel(props: Props) {
                         {episode.abilityCandidates.length === 0 ? (
                           <span className="muted">Ability候補なし（エピソードは保持します）</span>
                         ) : (
-                          episode.abilityCandidates.map((candidate) => (
-                            <div className="do-ability-candidate" key={`${episode.childId}-${candidate.abilityCode}`}>
-                              <div>
-                                <strong>{candidate.abilityCode}</strong>
-                                <span>confidence {candidate.confidence.toFixed(3)}</span>
+                          episode.abilityCandidates.map((candidate) => {
+                            const abilityName = observationHintByAbilityCode.get(
+                              candidate.abilityCode,
+                            )?.abilityName;
+
+                            return (
+                              <div className="do-ability-candidate" key={`${episode.childId}-${candidate.abilityCode}`}>
+                                <div>
+                                  <strong>
+                                    {candidate.abilityCode}
+                                    {abilityName ? ` ${abilityName}` : ""}
+                                  </strong>
+                                  <span>confidence {candidate.confidence.toFixed(3)}</span>
+                                </div>
+                                {candidate.evidenceText ? <p><b>根拠</b>{candidate.evidenceText}</p> : null}
+                                {candidate.reason ? <p><b>理由</b>{candidate.reason}</p> : null}
                               </div>
-                              {candidate.evidenceText ? <p><b>根拠</b>{candidate.evidenceText}</p> : null}
-                              {candidate.reason ? <p><b>理由</b>{candidate.reason}</p> : null}
-                            </div>
-                          ))
+                            );
+                          })
                         )}
                       </div>
                     </article>
@@ -2898,6 +2937,21 @@ export default function DoWorkspacePanel(props: Props) {
             </div>
           </div>
 
+          <nav className="do-day-navigation" aria-label="今日の日案内">
+            <a href="#do-practice-primary">
+              <span>1</span>
+              主活動へ
+            </a>
+            <a href="#do-practice-reserve">
+              <span>2</span>
+              予備活動へ
+            </a>
+            <a href="#do-report-workflow">
+              <span>3</span>
+              記録完了へ
+            </a>
+          </nav>
+
           <div className="do-practice-grid">
             {renderObservationHints("PRIMARY", dailyPlanContent.primaryPractice)}
             {renderObservationHints("RESERVE", dailyPlanContent.reservePractice)}
@@ -2962,7 +3016,7 @@ export default function DoWorkspacePanel(props: Props) {
               </span>
             </div>
 
-            <section className="do-workflow-card">
+            <section id="do-report-workflow" className="do-workflow-card">
               <div className="do-workflow-header">
                 <div>
                   <h3>記録完了・確認</h3>
