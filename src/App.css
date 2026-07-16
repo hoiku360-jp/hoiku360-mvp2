@@ -1500,3 +1500,891 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+
+/* Phase 8-A: Do Workspace / DailyReport draft */
+.do-workspace {
+  display: grid;
+  gap: 18px;
+}
+
+.do-workspace-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.do-workspace-header h2,
+.do-practice-card h3,
+.do-report-card h3 {
+  margin: 0;
+}
+
+.do-context-card,
+.do-plan-summary-card {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #e3ebe5;
+  border-radius: 18px;
+  background: #f7faf8;
+}
+
+.do-context-card div,
+.do-plan-summary-card div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.do-context-card strong,
+.do-plan-summary-card strong,
+.do-selector-card label > span,
+.do-transcript-label > span,
+.do-selected-practice-box strong,
+.do-hint-title-row strong {
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-context-card span,
+.do-plan-summary-card span {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.do-selector-card {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.65fr) minmax(220px, 0.85fr) minmax(300px, 1.3fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 16px;
+  border: 1px solid #e3ebe5;
+  border-radius: 18px;
+  background: #fcfdfc;
+}
+
+.do-selector-card label {
+  display: grid;
+  gap: 6px;
+}
+
+.do-selector-card input,
+.do-selector-card select,
+.do-transcript-label textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d8e2dc;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: white;
+  color: #1f2933;
+  font: inherit;
+}
+
+.do-practice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.do-practice-card,
+.do-report-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #e3ebe5;
+  border-radius: 18px;
+  background: #fcfdfc;
+}
+
+.do-practice-card-selected {
+  border-color: #2f6f5e;
+  background: #f0f8f4;
+  box-shadow: 0 0 0 2px rgba(47, 111, 94, 0.1);
+}
+
+.do-practice-card-header,
+.do-report-card-header,
+.do-hint-title-row,
+.do-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.do-practice-card-header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.do-practice-card-header small,
+.do-hint-title-row span,
+.do-transcript-label small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.do-practice-role {
+  color: #2f6f5e;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-practice-radio {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid #d8e2dc;
+  border-radius: 999px;
+  background: white;
+  color: #2f6f5e;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.do-practice-memo {
+  margin: 0;
+  max-height: 8.5em;
+  overflow: auto;
+  color: #374151;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.do-hint-list {
+  display: grid;
+  gap: 10px;
+}
+
+.do-hint-row {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: white;
+}
+
+.do-hint-meta {
+  display: grid;
+  gap: 3px;
+}
+
+.do-hint-meta strong {
+  color: #2f6f5e;
+}
+
+.do-hint-meta span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.do-hint-episodes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.do-hint-episodes p {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 9px;
+  border: 1px solid #e3ebe5;
+  border-radius: 12px;
+  background: #f7faf8;
+  color: #374151;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.do-hint-episodes b {
+  color: #52616b;
+  font-size: 12px;
+}
+
+.do-selected-practice-box {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 8px 14px;
+  padding: 12px;
+  border: 1px solid #86c5ad;
+  border-radius: 14px;
+  background: #f0f8f4;
+}
+
+.do-selected-practice-box span {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.do-transcript-label {
+  display: grid;
+  gap: 7px;
+}
+
+.do-transcript-label textarea {
+  min-height: 220px;
+  resize: vertical;
+  line-height: 1.8;
+}
+
+.do-transcript-label small {
+  line-height: 1.7;
+}
+
+.do-report-actions {
+  justify-content: flex-start;
+}
+
+@media (max-width: 900px) {
+  .do-context-card,
+  .do-plan-summary-card,
+  .do-selector-card,
+  .do-practice-grid,
+  .do-hint-episodes,
+  .do-selected-practice-box {
+    grid-template-columns: 1fr;
+  }
+
+  .do-workspace-header {
+    display: grid;
+  }
+}
+
+/* Phase 8-A2: practice-specific daily report transcripts */
+.do-practice-transcript-label {
+  display: grid;
+  gap: 7px;
+  padding-top: 12px;
+  border-top: 1px solid #cfe0d7;
+}
+
+.do-practice-transcript-label > span {
+  color: #2f6f5e;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.do-practice-transcript-label textarea {
+  width: 100%;
+  min-height: 210px;
+  box-sizing: border-box;
+  border: 1px solid #86c5ad;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: white;
+  color: #1f2933;
+  font: inherit;
+  line-height: 1.8;
+  resize: vertical;
+}
+
+.do-practice-transcript-label textarea:focus {
+  outline: 3px solid rgba(47, 111, 94, 0.14);
+  border-color: #2f6f5e;
+}
+
+.do-practice-transcript-label small {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.do-practice-preserved-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #fde68a;
+  border-radius: 12px;
+  background: #fefce8;
+  color: #854d0e;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.7;
+}
+
+.do-selected-practice-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.do-selected-practice-list span {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: white;
+  border: 1px solid #86c5ad;
+  color: #2f6f5e;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.do-report-guidance {
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: #f7faf8;
+  border: 1px solid #e3ebe5;
+  color: #52616b;
+  line-height: 1.75;
+}
+
+/* Phase 8-B: mandatory cleanup + child/Ability analysis */
+.do-ai-workflow {
+  display: grid;
+  gap: 14px;
+}
+
+.do-ai-step-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #d8e2dc;
+  border-radius: 16px;
+  background: white;
+}
+
+.do-ai-step-head,
+.do-child-analysis-title,
+.do-child-analysis-head,
+.do-ability-candidate > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.do-ai-step-head > div {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.do-ai-step-number {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #2f6f5e;
+  color: white;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-ai-status {
+  display: inline-flex;
+  width: fit-content;
+  padding: 4px 9px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-ai-status-cleaned,
+.do-ai-status-analyzed {
+  border-color: #86efac;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.do-ai-status-stale {
+  border-color: #fde68a;
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.do-ai-status-error {
+  border-color: #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.do-cleaned-transcript-label,
+.do-overall-record-label {
+  display: grid;
+  gap: 7px;
+}
+
+.do-cleaned-transcript-label > span,
+.do-overall-record-label > span {
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-cleaned-transcript-label textarea,
+.do-overall-record-label textarea {
+  width: 100%;
+  min-height: 180px;
+  box-sizing: border-box;
+  border: 1px solid #d8e2dc;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #fcfdfc;
+  color: #1f2933;
+  font: inherit;
+  line-height: 1.8;
+  resize: vertical;
+}
+
+.do-overall-record-label textarea {
+  min-height: 150px;
+}
+
+.do-cleaned-transcript-label small,
+.do-ai-required-note {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.do-ai-required-note {
+  color: #854d0e;
+  font-weight: 700;
+}
+
+.do-ai-error-text {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+  color: #991b1b;
+  line-height: 1.65;
+}
+
+.do-child-analysis-list {
+  display: grid;
+  gap: 10px;
+}
+
+.do-child-analysis-title span,
+.do-child-analysis-head small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.do-child-analysis-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #f7faf8;
+}
+
+.do-child-analysis-card > p {
+  margin: 0;
+  color: #374151;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.do-ability-candidate-list {
+  display: grid;
+  gap: 8px;
+}
+
+.do-ability-candidate {
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid #d8e2dc;
+  border-radius: 12px;
+  background: white;
+}
+
+.do-ability-candidate > div:first-child strong {
+  color: #2f6f5e;
+}
+
+.do-ability-candidate > div:first-child span {
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-ability-candidate p {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 6px;
+  margin: 0;
+  color: #52616b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.do-ability-candidate b {
+  color: #374151;
+}
+
+/* Phase 8-C1: formal ObservationRecord save */
+.do-observation-save-card {
+  border-color: #b7d9cc;
+  background: #fbfefc;
+}
+
+.do-observation-save-status {
+  display: inline-flex;
+  width: fit-content;
+  padding: 4px 9px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-observation-save-status-saved {
+  border-color: #86efac;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.do-observation-save-status-stale {
+  border-color: #fde68a;
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.do-observation-save-status-error {
+  border-color: #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.do-observation-save-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.do-observation-save-summary span {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 5px 9px;
+  border: 1px solid #bbf7d0;
+  border-radius: 999px;
+  background: #f0fdf4;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-observation-save-warning {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  background: #fefce8;
+  color: #854d0e;
+  line-height: 1.65;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Phase 8-C2: formal observation editing and Ability selection */
+.do-formal-observation-list {
+  display: grid;
+  gap: 14px;
+}
+
+.do-formal-observation-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d8e2dc;
+  border-radius: 16px;
+  background: white;
+}
+
+.do-formal-observation-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.do-formal-observation-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.do-formal-observation-head strong {
+  font-size: 16px;
+}
+
+.do-formal-observation-head small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.do-formal-observation-head > span {
+  display: inline-flex;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #eef4f0;
+  color: #2f6f5e;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-formal-episode-label {
+  display: grid;
+  gap: 7px;
+}
+
+.do-formal-episode-label > span,
+.do-formal-ability-title strong {
+  color: #52616b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.do-formal-episode-label textarea {
+  width: 100%;
+  min-height: 120px;
+  box-sizing: border-box;
+  border: 1px solid #d8e2dc;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #fcfdfc;
+  color: #1f2933;
+  font: inherit;
+  line-height: 1.8;
+  resize: vertical;
+}
+
+.do-formal-ability-list {
+  display: grid;
+  gap: 9px;
+}
+
+.do-formal-ability-title {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.do-formal-ability-title small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.do-formal-ability-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 13px;
+  background: #f9fafb;
+  cursor: pointer;
+}
+
+.do-formal-ability-option-selected {
+  border-color: #86c5ad;
+  background: #f0f8f4;
+}
+
+.do-formal-ability-option input {
+  margin-top: 4px;
+}
+
+.do-formal-ability-option > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.do-formal-ability-option b {
+  color: #2f6f5e;
+  font-size: 12px;
+}
+
+.do-formal-ability-option strong {
+  line-height: 1.55;
+}
+
+.do-formal-ability-option small,
+.do-formal-ability-option em {
+  color: #6b7280;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.6;
+}
+
+.do-formal-ability-option em {
+  color: #52616b;
+}
+
+@media (max-width: 720px) {
+  .do-formal-observation-head,
+  .do-formal-ability-title {
+    display: grid;
+  }
+}
+
+/* Do Workspace Phase 8-D: report completion and review workflow */
+.do-workflow-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #d8e2dc;
+  border-radius: 18px;
+  background: #f7faf8;
+}
+
+.do-workflow-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.do-workflow-header h3 {
+  margin: 0;
+}
+
+.do-workflow-header p {
+  margin: 6px 0 0;
+}
+
+.do-workflow-comment-label {
+  display: grid;
+  gap: 6px;
+  font-weight: 800;
+  color: #52616b;
+}
+
+.do-workflow-comment-label textarea {
+  width: 100%;
+  min-height: 92px;
+  box-sizing: border-box;
+  border: 1px solid #d8e2dc;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: white;
+  color: #1f2933;
+  font: inherit;
+  line-height: 1.7;
+  resize: vertical;
+}
+
+.do-completion-check-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: white;
+}
+
+.do-completion-check-card strong {
+  color: #52616b;
+}
+
+.do-completion-check-card ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 22px;
+  color: #991b1b;
+  line-height: 1.6;
+}
+
+.do-completion-ready {
+  margin: 0;
+  color: #166534;
+  font-weight: 700;
+  line-height: 1.7;
+}
+
+.do-workflow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.do-workflow-role-note {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.do-confirmed-note {
+  color: #166534;
+  font-weight: 800;
+}
+
+.do-workflow-history {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.do-workflow-history-item {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: white;
+}
+
+.do-workflow-history-item > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.do-workflow-history-item p {
+  margin: 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.do-workflow-history-item small {
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .do-workflow-header,
+  .do-workflow-history-item {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .do-workflow-history-item small {
+    white-space: normal;
+  }
+}

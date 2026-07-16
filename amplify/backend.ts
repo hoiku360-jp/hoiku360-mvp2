@@ -8,6 +8,7 @@ import {
   suggestPracticeLinksFn,
   registerPracticeLinksFn,
   issueNextDayDailyPlansFn,
+  analyzeDailyPracticeObservationFn,
 } from "./data/resource";
 
 const backend = defineBackend({
@@ -18,6 +19,7 @@ const backend = defineBackend({
   suggestPracticeLinksFn,
   registerPracticeLinksFn,
   issueNextDayDailyPlansFn,
+  analyzeDailyPracticeObservationFn,
 });
 
 const bedrockInvokePolicy = new PolicyStatement({
@@ -40,5 +42,9 @@ backend.analyzePracticeFn.resources.lambda.addToRolePolicy(
 );
 
 backend.suggestPracticeLinksFn.resources.lambda.addToRolePolicy(
+  bedrockInvokePolicy,
+);
+
+backend.analyzeDailyPracticeObservationFn.resources.lambda.addToRolePolicy(
   bedrockInvokePolicy,
 );

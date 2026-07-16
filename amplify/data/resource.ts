@@ -73,6 +73,17 @@ export const issueNextDayDailyPlansFn = defineFunction({
   ],
 });
 
+export const analyzeDailyPracticeObservationFn = defineFunction({
+  name: "analyze-daily-practice-observation",
+  entry: "../functions/analyze-daily-practice-observation/handler.ts",
+  timeoutSeconds: 120,
+  memoryMB: 1024,
+  runtime: 22,
+  environment: {
+    BEDROCK_MODEL_ID: "jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  },
+});
+
 const schema = a.schema({
   Tenant: a
     .model({
@@ -229,6 +240,26 @@ const schema = a.schema({
     .returns(a.ref("CleanupTranscriptTextResponse"))
     .authorization((allow) => [allow.authenticated()])
     .handler(a.handler.function(cleanupTranscriptTextFn)),
+
+
+  AnalyzeDailyPracticeObservationResponse: a.customType({
+    dailyPracticeRecordId: a.string().required(),
+    cleanedOverallText: a.string().required(),
+    analysisJson: a.string().required(),
+    status: a.string().required(),
+    aiModel: a.string(),
+    message: a.string(),
+  }),
+
+  analyzeDailyPracticeObservation: a
+    .mutation()
+    .arguments({
+      dailyPracticeRecordId: a.string().required(),
+      cleanedTranscriptText: a.string().required(),
+    })
+    .returns(a.ref("AnalyzeDailyPracticeObservationResponse"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(analyzeDailyPracticeObservationFn)),
 
   AnalyzePracticeResponse: a.customType({
     practiceId: a.string().required(),
@@ -449,6 +480,116 @@ AbilityPracticeAgg: a
     ]),
 
   /**
+   * Phase 8-A:
+   * Daily report header for the Do phase.
+   *
+   * PlanDocument / DAILY remains the issued plan snapshot.
+   * DailyReport is the report header and approval unit. From Phase 8-A2,
+   * Practice-specific transcripts are stored in DailyPracticeRecord. AI
+   * cleanup, child episode extraction, Ability linking, completion, and
+   * director/lead confirmation are added in later Phase 8 steps.
+   *
+   * Minimum Do rule: one active DailyReport per dailyPlanId.
+   */
+  DailyReport: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+      classroomId: a.id().required(),
+
+      dailyPlanId: a.id().required(),
+      reportDate: a.date().required(),
+
+      // Legacy compatibility fields from the first Phase 8-A implementation.
+      // DailyPracticeRecord is the source of truth from Phase 8-A2 onward.
+      actualPracticeRole: a.string(), // PRIMARY / RESERVE / MULTIPLE
+      actualPracticeCode: a.string(),
+      actualPracticeName: a.string(),
+
+      rawTranscriptText: a.string(), // combined compatibility snapshot
+      cleanedOverallText: a.string(),
+
+      status: a.string().required(), // DRAFT / COMPLETED / CONFIRMED / RETURNED / ARCHIVED
+
+      recordedByUserId: a.id(),
+      recordedByName: a.string(),
+      recordedAt: a.datetime(),
+
+      confirmedByUserId: a.id(),
+      confirmedByName: a.string(),
+      confirmedAt: a.datetime(),
+
+      contentJson: a.string(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
+   * Phase 8-A2:
+   * Practice-specific draft record under a DailyReport.
+   *
+   * A daily plan can result in one or two actual practices. Keeping each
+   * transcript separate prevents the primary and reserve observations from
+   * being mixed before AI cleanup and child-episode extraction.
+   */
+  DailyPracticeRecord: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+      classroomId: a.id().required(),
+
+      dailyReportId: a.id().required(),
+      dailyPlanId: a.id().required(),
+      reportDate: a.date().required(),
+
+      practiceRole: a.string().required(), // PRIMARY / RESERVE
+      practiceCode: a.string().required(),
+      practiceName: a.string().required(),
+      isPerformed: a.boolean().required(),
+
+      // Phase 8-B fix: exact observation-hint snapshot displayed to the teacher.
+      // The analysis Lambda reads this first so UI and AI always use the same
+      // Ability candidates and "見届けたい子どもの姿" examples.
+      observationHintsJson: a.string(),
+
+      rawTranscriptText: a.string(),
+
+      // Phase 8-B1: mandatory cleanup of speech-input transcript.
+      cleanedTranscriptText: a.string(),
+      cleanupStatus: a.string(), // NOT_CLEANED / CLEANED / STALE / ERROR
+      cleanupMessage: a.string(),
+      cleanedAt: a.datetime(),
+
+      // Phase 8-B2: child episode extraction and Ability analysis.
+      cleanedOverallText: a.string(),
+      analysisStatus: a.string(), // NOT_ANALYZED / ANALYZED / STALE / ERROR
+      analysisJson: a.string(),
+      aiModel: a.string(),
+      analyzedAt: a.datetime(),
+      analysisErrorMessage: a.string(),
+
+      // Phase 8-C1: formal child-observation save state.
+      observationSaveStatus: a.string(), // NOT_SAVED / SAVED / STALE / ERROR
+      observationSavedAt: a.datetime(),
+      observationRecordCount: a.integer(),
+      observationAbilityLinkCount: a.integer(),
+      observationSaveErrorMessage: a.string(),
+
+      status: a.string().required(), // DRAFT / COMPLETED / ARCHIVED
+      sortOrder: a.integer(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
    * Phase 3:
    * Impact analysis.
    *
@@ -572,11 +713,32 @@ AbilityPracticeAgg: a
       tenantId: a.id().required(),
       classroomId: a.id().required(),
       childId: a.id().required(),
+
+      // Legacy Phase 1 fields retained for compatibility.
       observedDate: a.date().required(),
       observerUserId: a.id(),
       sourceType: a.string().required(), // MANUAL / AUDIO / AI / IMPORT
       body: a.string().required(),
-      status: a.string().required(), // DRAFT / CONFIRMED / ARCHIVED
+      status: a.string().required(), // DRAFT / COMPLETED / CONFIRMED / RETURNED / ARCHIVED
+
+      // Phase 8-C1 formal daily observation context.
+      fiscalYear: a.integer(),
+      childName: a.string(),
+      dailyPlanId: a.id(),
+      dailyReportId: a.id(),
+      dailyPracticeRecordId: a.id(),
+      reportDate: a.date(),
+      practiceRole: a.string(), // PRIMARY / RESERVE
+      practiceCode: a.string(),
+      practiceName: a.string(),
+      episodeText: a.string(),
+      observedByUserId: a.id(),
+      observedByName: a.string(),
+      observedAt: a.datetime(),
+      aiGenerated: a.boolean(),
+      sourceAnalysisJson: a.string(),
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
     })
     .authorization((allow) => [allow.authenticated()]),
 
@@ -595,6 +757,13 @@ AbilityPracticeAgg: a
       confidence: a.float(),
       evidenceText: a.string(),
       status: a.string().required(), // ACTIVE / INACTIVE
+
+      // Phase 8-C1 metadata.
+      abilityName: a.string(),
+      reason: a.string(),
+      source: a.string(), // AI / MANUAL
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
     })
     .authorization((allow) => [allow.authenticated()]),
 })
@@ -604,6 +773,7 @@ AbilityPracticeAgg: a
    allow.resource(suggestPracticeLinksFn),
    allow.resource(registerPracticeLinksFn),
    allow.resource(issueNextDayDailyPlansFn),
+   allow.resource(analyzeDailyPracticeObservationFn),
 ]);
 
 export type Schema = ClientSchema<typeof schema>;

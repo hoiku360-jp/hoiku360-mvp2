@@ -17,6 +17,7 @@ import abilityObservationHintCsv from "./seed/data/AbilityObservationHint.csv?ra
 import PracticeRegisterPanel from "./features/practice-register/PracticeRegisterPanel";
 import PracticeSearchPanel from "./features/practice/PracticeSearchPanel";
 import PlanWorkspacePanel from "./features/plan/PlanWorkspacePanel";
+import DoWorkspacePanel from "./features/do/DoWorkspacePanel";
 import "./App.css";
 
 const rawClient = generateClient<Schema>({
@@ -333,7 +334,7 @@ type AppUserContext = {
   classroomNames: string[];
 };
 
-type TabKey = "home" | "planWorkspace" | "practiceRegister" | "practiceSearch";
+type TabKey = "home" | "doWorkspace" | "planWorkspace" | "practiceRegister" | "practiceSearch";
 
 type SeedSummary = {
   tenantCount: number;
@@ -1140,6 +1141,14 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
 
           <button
             type="button"
+            onClick={() => setTab("doWorkspace")}
+            disabled={!context?.tenantId || tab === "doWorkspace"}
+          >
+            今日の日案 / 日報
+          </button>
+
+          <button
+            type="button"
             onClick={() => setTab("planWorkspace")}
             disabled={!context?.tenantId || tab === "planWorkspace"}
           >
@@ -1169,6 +1178,22 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
           </p>
         )}
       </section>
+
+      {tab === "doWorkspace" && context?.tenantId && (
+        <section className="panel">
+          <DoWorkspacePanel
+            owner={practiceOwner}
+            ownerName={context.displayName}
+            ownerRole={context.role}
+            tenantId={practiceTenantId}
+            tenantName={context.tenantName}
+            fiscalYear={CURRENT_FISCAL_YEAR}
+            currentClassroomId={currentClassroomId}
+            allowedClassroomIds={context.classroomIds}
+            isSchoolScope={isSchoolScope}
+          />
+        </section>
+      )}
 
       {tab === "planWorkspace" && context?.tenantId && (
         <section className="panel">
