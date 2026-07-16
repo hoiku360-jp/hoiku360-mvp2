@@ -497,12 +497,12 @@ function buildDailyObservationHints(args: {
   targetDate: string;
   classroomId: string;
   ageYears: number | null;
-  primaryPracticeCode: string;
+  practiceCode: string;
   linksByPracticeCode: Map<string, AbilityPracticeLinkRow[]>;
   observationHints: AbilityObservationHintRow[];
   maxCount?: number;
 }): DailyObservationHintRow[] {
-  const practiceCode = s(args.primaryPracticeCode);
+  const practiceCode = s(args.practiceCode);
   if (!practiceCode || !args.ageYears) return [];
 
   const bestLinkByAbilityCode = new Map<string, AbilityPracticeLinkRow>();
@@ -619,7 +619,8 @@ function buildDailyPlanContent(args: {
   day: DailyWeeklyDayContent;
   primaryPractice: PracticeCodeRow | null;
   reservePractice: PracticeCodeRow | null;
-  observationHints: DailyObservationHintRow[];
+  primaryObservationHints: DailyObservationHintRow[];
+  reserveObservationHints: DailyObservationHintRow[];
   sourceImpactAnalysisIds: string[];
   issuedAt: string;
 }): Record<string, unknown> {
@@ -627,7 +628,7 @@ function buildDailyPlanContent(args: {
   const reservePracticeCode = s(args.day.reservePracticeCode);
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     planAnchorType: "SHORT_TERM_DAILY_PLAN",
     sourceWeeklyPlanId: s(args.weeklyPlan.id),
     sourceWeeklyPlanTitle: s(args.weeklyPlan.title),
@@ -650,6 +651,7 @@ function buildDailyPlanContent(args: {
       practiceCategoryLabel: practiceCategoryLabel(
         s(args.primaryPractice?.practiceCategory) || s(args.primaryPractice?.category_name),
       ),
+      observationHints: args.primaryObservationHints,
     },
     reservePractice: {
       practiceCode: reservePracticeCode,
@@ -669,15 +671,16 @@ function buildDailyPlanContent(args: {
             s(args.reservePractice?.practiceCategory) || s(args.reservePractice?.category_name),
           )
         : "",
+      observationHints: args.reserveObservationHints,
     },
     observationHintPolicy: {
-      maxAbilityCount: DAILY_OBSERVATION_HINT_LIMIT,
+      maxAbilityCountPerPractice: DAILY_OBSERVATION_HINT_LIMIT,
       ageRule: "startingAge <= classroomAgeYears; prefer nearest startingAge",
       episodeSelection: "episode1 / episode2 / episode3 are selected independently by stable hash",
       abilitySelection: "score priority with posture diversification",
-      reservePracticeIncluded: false,
+      practiceScope: "PRIMARY_AND_RESERVE_SEPARATE",
+      reservePracticeIncluded: Boolean(reservePracticeCode),
     },
-    observationHints: args.observationHints,
     issue: {
       issueType: "AUTO",
       issueVersion: 1,
@@ -780,11 +783,20 @@ export const handler = async (event: ScheduledEventLike = {}): Promise<IssueSumm
       const primaryPractice = practiceMap.get(primaryPracticeCode) ?? null;
       const reservePractice = practiceMap.get(s(day.reservePracticeCode)) ?? null;
       const sourceImpactIds = sourceImpactAnalysisIds(weeklyPlan.sourceImpactAnalysisIdsJson);
-      const observationHintsForDay = buildDailyObservationHints({
+      const primaryObservationHints = buildDailyObservationHints({
         targetDate,
         classroomId: s(weeklyPlan.classroomId),
         ageYears: n(weeklyContent.ageYears),
-        primaryPracticeCode,
+        practiceCode: primaryPracticeCode,
+        linksByPracticeCode,
+        observationHints,
+        maxCount: DAILY_OBSERVATION_HINT_LIMIT,
+      });
+      const reserveObservationHints = buildDailyObservationHints({
+        targetDate,
+        classroomId: s(weeklyPlan.classroomId),
+        ageYears: n(weeklyContent.ageYears),
+        practiceCode: s(day.reservePracticeCode),
         linksByPracticeCode,
         observationHints,
         maxCount: DAILY_OBSERVATION_HINT_LIMIT,
@@ -796,7 +808,8 @@ export const handler = async (event: ScheduledEventLike = {}): Promise<IssueSumm
         day,
         primaryPractice,
         reservePractice,
-        observationHints: observationHintsForDay,
+        primaryObservationHints,
+        reserveObservationHints,
         sourceImpactAnalysisIds: sourceImpactIds,
         issuedAt,
       });

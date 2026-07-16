@@ -1018,12 +1018,12 @@ function buildDailyObservationHints(args: {
   targetDate: string;
   classroomId: string;
   ageYears: number | null;
-  primaryPracticeCode: string;
+  practiceCode: string;
   linksByPracticeCode: Map<string, AbilityPracticeLinkRow[]>;
   observationHints: AbilityObservationHintRow[];
   maxCount?: number;
 }): DailyObservationHintRow[] {
-  const practiceCode = s(args.primaryPracticeCode);
+  const practiceCode = s(args.practiceCode);
   if (!practiceCode || !args.ageYears) return [];
 
   const bestLinkByAbilityCode = new Map<string, AbilityPracticeLinkRow>();
@@ -2220,14 +2220,14 @@ export default function PlanWorkspacePanel(props: Props) {
     [impactPractices, selectedDailyDay?.reservePracticeCode],
   );
 
-  const dailyPreviewObservationHints = useMemo(
+  const dailyPrimaryPreviewObservationHints = useMemo(
     () =>
       uniqueDailyObservationHints(
         buildDailyObservationHints({
           targetDate: dailyTargetDate,
           classroomId: selectedClassroomId,
           ageYears: selectedAgeYears,
-          primaryPracticeCode: s(selectedDailyDay?.primaryPracticeCode),
+          practiceCode: s(selectedDailyDay?.primaryPracticeCode),
           linksByPracticeCode,
           observationHints: dailyObservationHintRows,
           maxCount: DAILY_OBSERVATION_HINT_LIMIT,
@@ -2241,6 +2241,30 @@ export default function PlanWorkspacePanel(props: Props) {
       selectedClassroomId,
       selectedAgeYears,
       selectedDailyDay?.primaryPracticeCode,
+    ],
+  );
+
+  const dailyReservePreviewObservationHints = useMemo(
+    () =>
+      uniqueDailyObservationHints(
+        buildDailyObservationHints({
+          targetDate: dailyTargetDate,
+          classroomId: selectedClassroomId,
+          ageYears: selectedAgeYears,
+          practiceCode: s(selectedDailyDay?.reservePracticeCode),
+          linksByPracticeCode,
+          observationHints: dailyObservationHintRows,
+          maxCount: DAILY_OBSERVATION_HINT_LIMIT,
+        }),
+        DAILY_OBSERVATION_HINT_LIMIT,
+      ),
+    [
+      dailyObservationHintRows,
+      dailyTargetDate,
+      linksByPracticeCode,
+      selectedClassroomId,
+      selectedAgeYears,
+      selectedDailyDay?.reservePracticeCode,
     ],
   );
 
@@ -3585,7 +3609,7 @@ export default function PlanWorkspacePanel(props: Props) {
       const nowIso = new Date().toISOString();
 
       const content = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         planAnchorType: "SHORT_TERM_DAILY_PLAN",
         sourceWeeklyPlanId: s(selectedDailyWeeklyPlan.id),
         sourceWeeklyPlanTitle: s(selectedDailyWeeklyPlan.title),
@@ -3608,6 +3632,7 @@ export default function PlanWorkspacePanel(props: Props) {
           practiceCategoryLabel: practiceCategoryLabel(
             s(dailyPrimaryPractice?.practiceCategory) || s(dailyPrimaryPractice?.category_name),
           ),
+          observationHints: dailyPrimaryPreviewObservationHints,
         },
         reservePractice: {
           practiceCode: reservePracticeCode,
@@ -3627,15 +3652,16 @@ export default function PlanWorkspacePanel(props: Props) {
                 s(dailyReservePractice?.practiceCategory) || s(dailyReservePractice?.category_name),
               )
             : "",
+          observationHints: dailyReservePreviewObservationHints,
         },
         observationHintPolicy: {
-          maxAbilityCount: 4,
+          maxAbilityCountPerPractice: DAILY_OBSERVATION_HINT_LIMIT,
           ageRule: "startingAge <= classroomAgeYears; prefer nearest startingAge",
           episodeSelection: "episode1 / episode2 / episode3 are selected independently by stable hash",
           abilitySelection: "score priority with posture diversification",
-          reservePracticeIncluded: false,
+          practiceScope: "PRIMARY_AND_RESERVE_SEPARATE",
+          reservePracticeIncluded: Boolean(reservePracticeCode),
         },
-        observationHints: dailyPreviewObservationHints,
         issue: {
           issueType: "MANUAL",
           issueVersion,
@@ -3674,7 +3700,7 @@ export default function PlanWorkspacePanel(props: Props) {
       setDailyExistingPlanId(s(result.data?.id) || dailyExistingPlanId);
       setDailyExistingPlanRow(result.data ?? null);
       setMessage(
-        `${dailyExistingPlanId ? "日案を再発行しました" : "日案を発行しました"}: ${title} / 見届けたい姿 ${dailyPreviewObservationHints.length}件 / version ${issueVersion}`,
+        `${dailyExistingPlanId ? "日案を再発行しました" : "日案を発行しました"}: ${title} / 主活動の見届けたい姿 ${dailyPrimaryPreviewObservationHints.length}件 / 予備 ${dailyReservePreviewObservationHints.length}件 / version ${issueVersion}`,
       );
     } catch (e) {
       console.error(e);
@@ -4281,6 +4307,67 @@ export default function PlanWorkspacePanel(props: Props) {
   }
 
 
+  function renderDailyObservationHintCard(args: {
+    title: string;
+    practiceName: string;
+    practiceCode: string;
+    hints: DailyObservationHintRow[];
+    emptyMessage: string;
+  }) {
+    return (
+      <div className="daily-hint-card">
+        <div className="overview-card-header">
+          <div>
+            <h3>{args.title}</h3>
+            <span className="muted">
+              {args.practiceName || "未配置"}
+              {args.practiceCode ? ` / ${args.practiceCode}` : ""}
+            </span>
+          </div>
+          <span className="muted">
+            PracticeのAbilityから最大{DAILY_OBSERVATION_HINT_LIMIT}件を表示します。episode1/2/3はそれぞれ別々に選びます。
+          </span>
+        </div>
+
+        {args.hints.length === 0 ? (
+          <p className="muted">{args.emptyMessage}</p>
+        ) : (
+          <div className="daily-hint-list">
+            {args.hints.map((hint, index) => (
+              <div
+                className="daily-hint-row"
+                key={`${args.practiceCode}-${hint.abilityCode}-${hint.postureCode}-${index}`}
+              >
+                <div className="daily-hint-head">
+                  <div>
+                    <strong>{hint.abilityCode} {hint.abilityName}</strong>
+                    <span>{hint.postureCode} {hint.postureName} / score {hint.score} / {hint.startingAge}歳〜</span>
+                  </div>
+                </div>
+
+                <div className="daily-episode-grid">
+                  <div>
+                    <strong>行動・姿勢</strong>
+                    <p>{hint.episodes.episode1 || "-"}</p>
+                  </div>
+                  <div>
+                    <strong>言葉</strong>
+                    <p>{hint.episodes.episode2 || "-"}</p>
+                  </div>
+                  <div>
+                    <strong>しぐさ・表情</strong>
+                    <p>{hint.episodes.episode3 || "-"}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+
   function renderDailySection() {
     return (
       <div className="daily-section">
@@ -4369,10 +4456,10 @@ export default function PlanWorkspacePanel(props: Props) {
         <div className="daily-policy-card">
           <strong>日案発行ルール</strong>
           <span>
-            承認済み週案だけを日案発行対象にします。主活動Practiceから「見届けたい子どもの姿」を作成し、予備Practiceは天候や状況に応じた代替案として日案に保持します。
+            承認済み週案だけを日案発行対象にします。主活動Practiceと予備Practiceのそれぞれから、別々に「見届けたい子どもの姿」を作成します。
           </span>
           <span>
-            AbilityObservationHintは対象年齢以下を使い、scoreが高いAbilityを優先しつつ、同じ10の姿に偏りすぎないよう最大4件に絞ります。
+            AbilityObservationHintは対象年齢以下を使い、scoreが高いAbilityを優先しつつ、同じ10の姿に偏りすぎないようPracticeごとに最大4件へ絞ります。
           </span>
         </div>
 
@@ -4440,8 +4527,10 @@ export default function PlanWorkspacePanel(props: Props) {
               <dd>{selectedDailyWeeklyPlan ? s(selectedDailyWeeklyPlan.title) || s(selectedDailyWeeklyPlan.id) : "-"}</dd>
               <dt>日案ID</dt>
               <dd>{dailyExistingPlanId || "未発行"}</dd>
-              <dt>見届けたい姿</dt>
-              <dd>{dailyPreviewObservationHints.length}件</dd>
+              <dt>主活動の見届けたい姿</dt>
+              <dd>{dailyPrimaryPreviewObservationHints.length}件</dd>
+              <dt>予備の見届けたい姿</dt>
+              <dd>{s(selectedDailyDay?.reservePracticeCode) ? `${dailyReservePreviewObservationHints.length}件` : "予備未配置"}</dd>
             </dl>
 
             <button
@@ -4460,48 +4549,30 @@ export default function PlanWorkspacePanel(props: Props) {
           </div>
         </div>
 
-        <div className="daily-hint-card">
-          <div className="overview-card-header">
-            <h3>見届けたい子どもの姿</h3>
-            <span className="muted">
-              主活動PracticeのAbilityから最大4件を表示します。episode1/2/3はそれぞれ別々に選びます。
-            </span>
-          </div>
+        {renderDailyObservationHintCard({
+          title: "主活動Practiceの見届けたい子どもの姿",
+          practiceName:
+            s(dailyPrimaryPractice?.name) ||
+            s(selectedDailyDay?.primaryPracticeName) ||
+            s(selectedDailyDay?.primaryPracticeCode),
+          practiceCode: s(selectedDailyDay?.primaryPracticeCode),
+          hints: dailyPrimaryPreviewObservationHints,
+          emptyMessage:
+            "表示できる具体例がありません。主活動PracticeのAbilityリンク、AbilityObservationHintのseed、対象年齢を確認してください。",
+        })}
 
-          {dailyPreviewObservationHints.length === 0 ? (
-            <p className="muted">
-              表示できる具体例がありません。主活動PracticeのAbilityリンク、AbilityObservationHintのseed、対象年齢を確認してください。
-            </p>
-          ) : (
-            <div className="daily-hint-list">
-              {dailyPreviewObservationHints.map((hint, index) => (
-                <div className="daily-hint-row" key={`${hint.abilityCode}-${hint.postureCode}-${index}`}>
-                  <div className="daily-hint-head">
-                    <div>
-                      <strong>{hint.abilityCode} {hint.abilityName}</strong>
-                      <span>{hint.postureCode} {hint.postureName} / score {hint.score} / {hint.startingAge}歳〜</span>
-                    </div>
-                  </div>
-
-                  <div className="daily-episode-grid">
-                    <div>
-                      <strong>行動・姿勢</strong>
-                      <p>{hint.episodes.episode1 || "-"}</p>
-                    </div>
-                    <div>
-                      <strong>言葉</strong>
-                      <p>{hint.episodes.episode2 || "-"}</p>
-                    </div>
-                    <div>
-                      <strong>しぐさ・表情</strong>
-                      <p>{hint.episodes.episode3 || "-"}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        {renderDailyObservationHintCard({
+          title: "予備Practiceの見届けたい子どもの姿",
+          practiceName:
+            s(dailyReservePractice?.name) ||
+            s(selectedDailyDay?.reservePracticeName) ||
+            s(selectedDailyDay?.reservePracticeCode),
+          practiceCode: s(selectedDailyDay?.reservePracticeCode),
+          hints: dailyReservePreviewObservationHints,
+          emptyMessage: s(selectedDailyDay?.reservePracticeCode)
+            ? "表示できる具体例がありません。予備PracticeのAbilityリンク、AbilityObservationHintのseed、対象年齢を確認してください。"
+            : "この日には予備Practiceが配置されていません。",
+        })}
       </div>
     );
   }
