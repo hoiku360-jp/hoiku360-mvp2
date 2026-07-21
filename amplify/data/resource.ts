@@ -84,6 +84,28 @@ export const analyzeDailyPracticeObservationFn = defineFunction({
   },
 });
 
+export const generateChildWeekendLetterFn = defineFunction({
+  name: "generate-child-weekend-letter",
+  entry: "../functions/generate-child-weekend-letter/handler.ts",
+  timeoutSeconds: 120,
+  memoryMB: 1024,
+  runtime: 22,
+  environment: {
+    BEDROCK_MODEL_ID: "jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  },
+});
+
+export const generateChildProgressRecordFn = defineFunction({
+  name: "generate-child-progress-record",
+  entry: "../functions/generate-child-progress-record/handler.ts",
+  timeoutSeconds: 120,
+  memoryMB: 1024,
+  runtime: 22,
+  environment: {
+    BEDROCK_MODEL_ID: "jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  },
+});
+
 const schema = a.schema({
   Tenant: a
     .model({
@@ -260,6 +282,50 @@ const schema = a.schema({
     .returns(a.ref("AnalyzeDailyPracticeObservationResponse"))
     .authorization((allow) => [allow.authenticated()])
     .handler(a.handler.function(analyzeDailyPracticeObservationFn)),
+
+  GenerateChildWeekendLetterResponse: a.customType({
+    childWeeklyReportId: a.string().required(),
+    status: a.string().required(),
+    title: a.string(),
+    weeklyEpisodeText: a.string(),
+    growthText: a.string(),
+    comparisonText: a.string(),
+    weekendPlayText: a.string(),
+    parentLetterText: a.string(),
+    aiModel: a.string(),
+    inputTokenCount: a.integer(),
+    outputTokenCount: a.integer(),
+    generatedAt: a.datetime(),
+  }),
+
+  generateChildWeekendLetter: a
+    .mutation()
+    .arguments({
+      childWeeklyReportId: a.string().required(),
+    })
+    .returns(a.ref("GenerateChildWeekendLetterResponse"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(generateChildWeekendLetterFn)),
+
+  GenerateChildProgressRecordResponse: a.customType({
+    childProgressRecordId: a.string().required(),
+    status: a.string().required(),
+    aiDraftJson: a.string().required(),
+    aiDraftText: a.string().required(),
+    aiModel: a.string(),
+    inputTokenCount: a.integer(),
+    outputTokenCount: a.integer(),
+    generatedAt: a.datetime(),
+  }),
+
+  generateChildProgressRecord: a
+    .mutation()
+    .arguments({
+      childProgressRecordId: a.string().required(),
+    })
+    .returns(a.ref("GenerateChildProgressRecordResponse"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(generateChildProgressRecordFn)),
 
   AnalyzePracticeResponse: a.customType({
     practiceId: a.string().required(),
@@ -696,6 +762,145 @@ AbilityPracticeAgg: a
       allow.authenticated().to(["create", "read", "update", "delete"]),
     ]),
 
+
+  /**
+   * Phase 9-C3:
+   * Child weekly record and parent-facing weekend letter draft.
+   *
+   * A deterministic id is used by the UI so one child / one week is
+   * updated instead of creating duplicate AI drafts.
+   */
+  ChildWeeklyReport: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+      classroomId: a.id().required(),
+      childId: a.id().required(),
+      childName: a.string().required(),
+      weekStartDate: a.date().required(),
+      weekEndDate: a.date().required(),
+
+      status: a.string().required(), // DRAFT / COMPLETED / CONFIRMED / RETURNED / ARCHIVED
+
+      sourceSnapshotJson: a.string(),
+      comparisonSnapshotJson: a.string(),
+      weekendPlayCandidatesJson: a.string(),
+      selectedWeekendPlayJson: a.string(),
+      sourceObservationIdsJson: a.string(),
+      sourceAbilityCodesJson: a.string(),
+
+      title: a.string(),
+      weeklyEpisodeText: a.string(),
+      growthText: a.string(),
+      comparisonText: a.string(),
+      weekendPlayText: a.string(),
+      parentLetterText: a.string(),
+
+      aiStatus: a.string(), // NOT_GENERATED / GENERATING / GENERATED / STALE / ERROR
+      aiModel: a.string(),
+      promptVersion: a.string(),
+      inputTokenCount: a.integer(),
+      outputTokenCount: a.integer(),
+      generatedAt: a.datetime(),
+      generationErrorMessage: a.string(),
+      aiRawJson: a.string(),
+
+      // Phase 9-C4: teacher completion, director / lead review, and
+      // parent-delivery preparation. The final text is snapshotted on
+      // confirmation so later source changes do not silently alter what was
+      // approved for parents.
+      recordedByUserId: a.id(),
+      recordedByName: a.string(),
+      recordedAt: a.datetime(),
+
+      confirmedByUserId: a.id(),
+      confirmedByName: a.string(),
+      confirmedAt: a.datetime(),
+
+      reviewHistoryJson: a.string(),
+      deliveryStatus: a.string(), // NOT_READY / READY
+      finalParentLetterText: a.string(),
+      deliveryPreparedByUserId: a.id(),
+      deliveryPreparedByName: a.string(),
+      deliveryPreparedAt: a.datetime(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+
+
+  /**
+   * Phase 9-D1:
+   * Child progress record support for nursery child records.
+   *
+   * One deterministic record is used for one child and one current period.
+   * Evidence and comparison results are snapshotted as JSON so the teacher
+   * can verify exactly which confirmed observations supported the draft.
+   */
+  ChildProgressRecord: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+      classroomId: a.id().required(),
+      childId: a.id().required(),
+      childName: a.string().required(),
+
+      currentPeriodStart: a.date().required(),
+      currentPeriodEnd: a.date().required(),
+      comparisonPeriodStart: a.date().required(),
+      comparisonPeriodEnd: a.date().required(),
+
+      status: a.string().required(), // DRAFT / COMPLETED / CONFIRMED / RETURNED / ARCHIVED
+
+      evidenceSnapshotJson: a.string(),
+      sourceObservationIdsJson: a.string(),
+      sourceAbilityCodesJson: a.string(),
+
+      // Phase 9-D3a: keep the deterministic template draft completely
+      // separate from the Claude result. Claude input and prompt are not
+      // changed in this phase.
+      templateDraftText: a.string(),
+
+      // Phase 9-D3: compact, sanitized evidence sent to Claude and the
+      // structured 5-domain draft returned by Claude.
+      aiSourceSnapshotJson: a.string(),
+      aiDraftJson: a.string(),
+      aiDraftText: a.string(),
+
+      // Working text starts from the Claude draft and can later be used by
+      // the completion / confirmation workflow. It never overwrites the
+      // deterministic templateDraftText.
+      draftText: a.string(),
+      finalText: a.string(),
+
+      aiStatus: a.string(), // NOT_GENERATED / GENERATING / GENERATED / STALE / ERROR
+      aiModel: a.string(),
+      promptVersion: a.string(),
+      inputTokenCount: a.integer(),
+      outputTokenCount: a.integer(),
+      generatedAt: a.datetime(),
+      generationErrorMessage: a.string(),
+      aiRawJson: a.string(),
+
+      // Reserved for Phase 9-D4 completion and review workflow.
+      recordedByUserId: a.id(),
+      recordedByName: a.string(),
+      recordedAt: a.datetime(),
+      confirmedByUserId: a.id(),
+      confirmedByName: a.string(),
+      confirmedAt: a.datetime(),
+      reviewHistoryJson: a.string(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
   
     /**
    * Phase 1-A:
@@ -774,6 +979,8 @@ AbilityPracticeAgg: a
    allow.resource(registerPracticeLinksFn),
    allow.resource(issueNextDayDailyPlansFn),
    allow.resource(analyzeDailyPracticeObservationFn),
+   allow.resource(generateChildWeekendLetterFn),
+   allow.resource(generateChildProgressRecordFn),
 ]);
 
 export type Schema = ClientSchema<typeof schema>;

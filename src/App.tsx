@@ -18,6 +18,9 @@ import PracticeRegisterPanel from "./features/practice-register/PracticeRegister
 import PracticeSearchPanel from "./features/practice/PracticeSearchPanel";
 import PlanWorkspacePanel from "./features/plan/PlanWorkspacePanel";
 import DoWorkspacePanel from "./features/do/DoWorkspacePanel";
+import CheckWorkspacePanel from "./features/check/CheckWorkspacePanel";
+import ChildWeeklyWorkspacePanel from "./features/check/ChildWeeklyWorkspacePanel";
+import ChildProgressRecordPanel from "./features/check/ChildProgressRecordPanel";
 import "./App.css";
 
 const rawClient = generateClient<Schema>({
@@ -334,7 +337,15 @@ type AppUserContext = {
   classroomNames: string[];
 };
 
-type TabKey = "home" | "doWorkspace" | "planWorkspace" | "practiceRegister" | "practiceSearch";
+type TabKey =
+  | "home"
+  | "doWorkspace"
+  | "checkWorkspace"
+  | "childWeekly"
+  | "childProgress"
+  | "planWorkspace"
+  | "practiceRegister"
+  | "practiceSearch";
 
 type SeedSummary = {
   tenantCount: number;
@@ -1149,6 +1160,31 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
 
           <button
             type="button"
+            onClick={() => setTab("checkWorkspace")}
+            disabled={!context?.tenantId || tab === "checkWorkspace"}
+          >
+            クラス報告 / Check
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTab("childWeekly")}
+            disabled={!context?.tenantId || tab === "childWeekly"}
+          >
+            子ども週次記録 / Check
+          </button>
+
+
+          <button
+            type="button"
+            onClick={() => setTab("childProgress")}
+            disabled={!context?.tenantId || tab === "childProgress"}
+          >
+            保育経過記録支援 / Check
+          </button>
+
+          <button
+            type="button"
             onClick={() => setTab("planWorkspace")}
             disabled={!context?.tenantId || tab === "planWorkspace"}
           >
@@ -1182,6 +1218,51 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
       {tab === "doWorkspace" && context?.tenantId && (
         <section className="panel">
           <DoWorkspacePanel
+            owner={practiceOwner}
+            ownerName={context.displayName}
+            ownerRole={context.role}
+            tenantId={practiceTenantId}
+            tenantName={context.tenantName}
+            fiscalYear={CURRENT_FISCAL_YEAR}
+            currentClassroomId={currentClassroomId}
+            allowedClassroomIds={context.classroomIds}
+            isSchoolScope={isSchoolScope}
+          />
+        </section>
+      )}
+
+      {tab === "checkWorkspace" && context?.tenantId && (
+        <section className="panel">
+          <CheckWorkspacePanel
+            tenantId={practiceTenantId}
+            tenantName={context.tenantName}
+            fiscalYear={CURRENT_FISCAL_YEAR}
+            currentClassroomId={currentClassroomId}
+            allowedClassroomIds={context.classroomIds}
+            isSchoolScope={isSchoolScope}
+          />
+        </section>
+      )}
+
+      {tab === "childWeekly" && context?.tenantId && (
+        <section className="panel">
+          <ChildWeeklyWorkspacePanel
+            owner={practiceOwner}
+            ownerName={context.displayName}
+            ownerRole={context.role}
+            tenantId={practiceTenantId}
+            tenantName={context.tenantName}
+            fiscalYear={CURRENT_FISCAL_YEAR}
+            currentClassroomId={currentClassroomId}
+            allowedClassroomIds={context.classroomIds}
+            isSchoolScope={isSchoolScope}
+          />
+        </section>
+      )}
+
+      {tab === "childProgress" && context?.tenantId && (
+        <section className="panel">
+          <ChildProgressRecordPanel
             owner={practiceOwner}
             ownerName={context.displayName}
             ownerRole={context.role}
