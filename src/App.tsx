@@ -3,11 +3,13 @@ import { Authenticator } from "@aws-amplify/ui-react";
 import { getCurrentUser } from "aws-amplify/auth";
 import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../amplify/data/resource";
+import outputs from "../amplify_outputs.json";
 import tenantCsv from "./seed/data/Tenant.csv?raw";
 import classroomCsv from "./seed/data/Classroom.csv?raw";
 import userProfileCsv from "./seed/data/UserProfile.csv?raw";
 import staffAssignmentCsv from "./seed/data/StaffAssignment.csv?raw";
 import userSubMapCsv from "./seed/data/UserSubMap.csv?raw";
+import userSubMapMainCsv from "./seed/data/UserSubMapMain.csv?raw";
 import abilityCodesLangCsv from "./seed/data/ability_codes_lang.csv?raw";
 import childCsv from "./seed/data/Child.csv?raw";
 import childClassroomEnrollmentCsv from "./seed/data/ChildClassroomEnrollment.csv?raw";
@@ -28,6 +30,7 @@ const rawClient = generateClient<Schema>({
 });
 
 const CURRENT_FISCAL_YEAR = 2026;
+const MAIN_USER_POOL_ID = "ap-northeast-1_5ac387mHz";
 
 type ModelGetResult<T> = Promise<{
   data: T | null;
@@ -436,7 +439,15 @@ function parseCsv(text: string): SeedRow[] {
 
 function buildUserSubMap(): Map<string, string> {
   const map = new Map<string, string>();
-  const rows = parseCsv(userSubMapCsv);
+
+  const currentUserPoolId = String(outputs.auth?.user_pool_id ?? "");
+
+  const selectedUserSubMapCsv =
+    currentUserPoolId === MAIN_USER_POOL_ID
+      ? userSubMapMainCsv
+      : userSubMapCsv;
+
+  const rows = parseCsv(selectedUserSubMapCsv);
 
   for (const row of rows) {
     const oldUserId = String(row.oldUserId ?? "").trim();
