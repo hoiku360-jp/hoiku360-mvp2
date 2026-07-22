@@ -434,15 +434,19 @@ function previewText(value: unknown, max = 160): string {
 async function findPracticeByCodeForTenant(
   model: PracticeCodeModelClient,
   tenantId: string,
+  owner: string,
   practiceCode: string,
 ): Promise<PracticeCodeRow | null> {
+  const normalizedTenantId = s(tenantId);
+  const normalizedOwner = s(owner);
+  const normalizedPracticeCode = s(practiceCode).toUpperCase();
+
   let nextToken: string | null | undefined;
+  const sameCodeRows: PracticeCodeRow[] = [];
 
   do {
     const result = await model.list({
-      filter: {
-        tenantId: { eq: tenantId },
-      },
+      authMode: "userPool",
       limit: 1000,
       nextToken,
     });
@@ -456,18 +460,47 @@ async function findPracticeByCodeForTenant(
       );
     }
 
-    const found = (result.data ?? []).find(
-      (row) =>
-        s(row.tenantId) === tenantId &&
-        s(row.practice_code).toUpperCase() === practiceCode.toUpperCase(),
-    );
+    for (const row of result.data ?? []) {
+      if (
+        s(row.practice_code).toUpperCase() !== normalizedPracticeCode
+      ) {
+        continue;
+      }
 
-    if (found) {
-      return found;
+      sameCodeRows.push(row);
+
+      const sameTenant = s(row.tenantId) === normalizedTenantId;
+      const sameOwner = s(row.owner) === normalizedOwner;
+
+      if (sameTenant && sameOwner) {
+        return row;
+      }
     }
 
     nextToken = result.nextToken ?? null;
   } while (nextToken);
+
+  const sameTenantRow = sameCodeRows.find(
+    (row) => s(row.tenantId) === normalizedTenantId,
+  );
+
+  if (sameTenantRow) {
+    throw new Error(
+      [
+        "このPracticeは別のユーザーが登録したため、メンテナンスできません。",
+        "登録したユーザーでログインしてください。",
+      ].join(" "),
+    );
+  }
+
+  if (sameCodeRows.length > 0) {
+    throw new Error(
+      [
+        "このPracticeは別の園で登録されているため、メンテナンスできません。",
+        "登録した園のユーザーでログインしてください。",
+      ].join(" "),
+    );
+  }
 
   return null;
 }
@@ -701,11 +734,14 @@ export default function PracticeRegisterPanel(props: Props) {
       const practice = await findPracticeByCodeForTenant(
         practiceCodeModel,
         tenantId,
+        owner,
         targetCode,
       );
 
       if (!practice) {
-        throw new Error(`PracticeCode が見つかりません: ${targetCode}`);
+        throw new Error(
+          `指定したPracticeCodeが見つかりません。入力内容を確認してください: ${targetCode}`,
+        );
       }
 
       const actualPracticeCode = s(practice.practice_code);
