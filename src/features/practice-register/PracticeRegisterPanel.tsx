@@ -431,6 +431,47 @@ function previewText(value: unknown, max = 160): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
 
+async function findPracticeByCodeForTenant(
+  model: PracticeCodeModelClient,
+  tenantId: string,
+  practiceCode: string,
+): Promise<PracticeCodeRow | null> {
+  let nextToken: string | null | undefined;
+
+  do {
+    const result = await model.list({
+      filter: {
+        tenantId: { eq: tenantId },
+      },
+      limit: 1000,
+      nextToken,
+    });
+
+    if (result.errors?.length) {
+      throw new Error(
+        formatModelErrors(
+          result.errors,
+          "PracticeCodeの検索に失敗しました。",
+        ),
+      );
+    }
+
+    const found = (result.data ?? []).find(
+      (row) =>
+        s(row.tenantId) === tenantId &&
+        s(row.practice_code).toUpperCase() === practiceCode.toUpperCase(),
+    );
+
+    if (found) {
+      return found;
+    }
+
+    nextToken = result.nextToken ?? null;
+  } while (nextToken);
+
+  return null;
+}
+
 export default function PracticeRegisterPanel(props: Props) {
   const { owner, tenantId } = props;
   const client = useMemo(() => generateClient<Schema>(), []);
@@ -645,7 +686,7 @@ export default function PracticeRegisterPanel(props: Props) {
   }
 
   async function handleLoadPracticeByCode() {
-    const targetCode = loadPracticeCode.trim();
+    const targetCode = loadPracticeCode.trim().toUpperCase();
 
     if (!targetCode) {
       setError("読み込む practiceCode を入力してください。");
@@ -657,39 +698,34 @@ export default function PracticeRegisterPanel(props: Props) {
     setMessage("");
 
     try {
-      const result = await practiceCodeModel.list({
-        filter: {
-          practice_code: { eq: targetCode },
-        },
-        limit: 20,
-      });
-
-      if (result.errors?.length) {
-        throw new Error(
-          formatModelErrors(result.errors, "PracticeCodeの検索に失敗しました。"),
-        );
-      }
-
-      const practice =
-        (result.data ?? []).find((row) => s(row.tenantId) === tenantId) ??
-        result.data?.[0] ??
-        null;
+      const practice = await findPracticeByCodeForTenant(
+        practiceCodeModel,
+        tenantId,
+        targetCode,
+      );
 
       if (!practice) {
         throw new Error(`PracticeCode が見つかりません: ${targetCode}`);
       }
 
+      const actualPracticeCode = s(practice.practice_code);
+
       applyPracticeToForm(practice);
-      await listSuggestions(s(practice.practice_code));
+      setLoadPracticeCode(actualPracticeCode);
+
+      await listSuggestions(actualPracticeCode);
 
       setMode("maintenance");
       setMessage(
-        `既存Practiceを読み込みました: ${s(practice.practice_code)}。必要に応じて編集・再生成・本登録できます。`,
+        `既存Practiceを読み込みました: ${actualPracticeCode}。必要に応じて編集・再生成・本登録できます。`,
       );
     } catch (e) {
       console.error(e);
+
       setError(
-        `Practice読み込みエラー: ${e instanceof Error ? e.message : String(e)}`,
+        `Practice読み込みエラー: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
     } finally {
       setLoadingPractice(false);
