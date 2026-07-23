@@ -293,21 +293,38 @@ async function listAll<T, TArgs>(
   return rows;
 }
 
-function practiceVisibleForTenant(
-  row: { tenantId?: string | null; publishScope?: string | null; visibility?: string | null },
+function practiceVisibleForUser(
+  row: {
+    tenantId?: string | null;
+    publishScope?: string | null;
+    visibility?: string | null;
+    owner?: string | null;
+  },
   targetTenantId: string,
+  currentOwner: string,
 ): boolean {
   const rowTenantId = s(row.tenantId);
   const publishScope = s(row.publishScope).toLowerCase();
   const visibility = s(row.visibility).toLowerCase();
+  const rowOwner = s(row.owner);
 
-  if (!targetTenantId) return true;
-  if (!rowTenantId || rowTenantId === targetTenantId) return true;
-  if (rowTenantId === "global" || rowTenantId === "common") return true;
+  // 非公開：登録者本人だけが閲覧可能。
+  if (visibility === "private" || publishScope === "self") {
+    return Boolean(currentOwner && rowOwner === currentOwner);
+  }
 
-  // PracticeCode keeps tenantId for the registering tenant, while
-  // publishScope=global means it should be searchable as a common practice.
-  return publishScope === "global" || (visibility === "public" && publishScope === "global");
+  // 公開：全テナントから閲覧可能。
+  if (publishScope === "global") {
+    return true;
+  }
+
+  // 園内：同一テナントのユーザーだけが閲覧可能。
+  if (publishScope === "tenant") {
+    return Boolean(targetTenantId && rowTenantId === targetTenantId);
+  }
+
+  // 旧データ・未設定データは安全側で同一テナントだけに限定。
+  return Boolean(targetTenantId && rowTenantId === targetTenantId);
 }
 
 function suggestionVisibleForTenant(
@@ -444,9 +461,11 @@ export default function PracticeSearchPanel(props: Props) {
         filter ? { filter } : undefined,
       );
 
-      return items.filter((row) => practiceVisibleForTenant(row, tenantId));
+      return items.filter((row) =>
+        practiceVisibleForUser(row, tenantId, owner),
+      );
     },
-    [client, tenantId],
+    [client, tenantId, owner],
   );
 
   const listPracticeLinkSuggestions = useCallback(
