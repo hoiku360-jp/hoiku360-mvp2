@@ -231,6 +231,29 @@ function practiceSeasonalityLabel(practice?: PracticeCodeRow | null): string {
     .join("、");
 }
 
+function practicePublishLabel(
+  practice?: PracticeCodeRow | null,
+): string {
+  if (!practice) return "-";
+
+  const visibility = s(practice.visibility).toLowerCase();
+  const publishScope = s(practice.publishScope).toLowerCase();
+
+  if (visibility === "private" || publishScope === "self") {
+    return "非公開";
+  }
+
+  if (publishScope === "global") {
+    return "公開";
+  }
+
+  if (publishScope === "tenant") {
+    return "園内";
+  }
+
+  return "-";
+}
+
 function isPracticeOwnedByCurrentUser(
   practice: PracticeCodeRow | null | undefined,
   currentOwner: string,
@@ -1194,7 +1217,7 @@ export default function PracticeSearchPanel(props: Props) {
                   <th style={{ padding: 8 }}>category</th>
                   <th style={{ padding: 8 }}>対象年齢</th>
                   <th style={{ padding: 8 }}>季節性</th>
-                  <th style={{ padding: 8 }}>visibility</th>
+                  <th style={{ padding: 8 }}>公開範囲</th>
                   <th style={{ padding: 8 }}>recordedAt</th>
                   <th style={{ padding: 8, minWidth: 320 }}>memo</th>
                   <th style={{ padding: 8 }}>操作</th>
@@ -1240,7 +1263,7 @@ export default function PracticeSearchPanel(props: Props) {
                         {practiceSeasonalityLabel(practice)}
                       </td>
                       <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>
-                        {s(practice.visibility) || s(practice.publishScope) || "-"}
+                        {practicePublishLabel(practice)}
                       </td>
                       <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", minWidth: 180, verticalAlign: "top" }}>
                         {s(practice.recordedAt) || s(practice.createdAt) || "-"}
