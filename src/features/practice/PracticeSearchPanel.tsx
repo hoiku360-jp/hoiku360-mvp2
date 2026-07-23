@@ -231,6 +231,17 @@ function practiceSeasonalityLabel(practice?: PracticeCodeRow | null): string {
     .join("、");
 }
 
+function isPracticeOwnedByCurrentUser(
+  practice: PracticeCodeRow | null | undefined,
+  currentOwner: string,
+): boolean {
+  if (!practice || !currentOwner) {
+    return false;
+  }
+
+  return s(practice.owner) === currentOwner;
+}
+
 async function listAll<T, TArgs>(
   listFn: (args: TArgs) => Promise<ListResult<T>>,
   args?: Partial<Omit<ListArgs, "authMode" | "limit" | "nextToken">>,
@@ -316,7 +327,8 @@ function copyToClipboard(text: string) {
 
 export default function PracticeSearchPanel(props: Props) {
   const tenantId = s(props.tenantId);
-  void props.owner;
+  const owner = s(props.owner);
+
   void props.currentClassroomId;
   void props.allowedClassroomIds;
   void props.isSchoolScope;
@@ -341,6 +353,7 @@ export default function PracticeSearchPanel(props: Props) {
   const [practiceRows, setPracticeRows] = useState<PracticeCodeRow[]>([]);
   const [practiceFilter, setPracticeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [ownPracticeOnly, setOwnPracticeOnly] = useState(false);
 
   const [selectedPracticeCode, setSelectedPracticeCode] = useState("");
   const [suggestions, setSuggestions] = useState<PracticeLinkSuggestionRow[]>(
@@ -703,9 +716,19 @@ export default function PracticeSearchPanel(props: Props) {
         transcriptText.toLowerCase().includes(q);
 
       const hitStatus = !st || status === st;
-      return hitQuery && hitStatus;
+      const hitOwner =
+        !ownPracticeOnly ||
+        isPracticeOwnedByCurrentUser(row, owner);
+
+      return hitQuery && hitStatus && hitOwner;
     });
-  }, [practiceRows, practiceFilter, statusFilter]);
+  }, [
+    practiceRows,
+    practiceFilter,
+    statusFilter,
+    ownPracticeOnly,
+    owner,
+  ]);
 
   const displayRows = viewMode === "ability" ? rows : filteredPracticeRows;
   const totalRows = displayRows.length;
@@ -942,6 +965,30 @@ export default function PracticeSearchPanel(props: Props) {
             </select>
           </label>
 
+          <label
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              padding: "6px 10px",
+              border: "1px solid #ddd",
+              borderRadius: 6,
+              background: ownPracticeOnly ? "#f0fdf4" : "#fff",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={ownPracticeOnly}
+              disabled={!owner}
+              onChange={(event) => {
+                setOwnPracticeOnly(event.target.checked);
+                setSelectedPracticeCode("");
+                setPage(0);
+              }}
+            />
+            <span>自分がメンテナンスできるPracticeのみ</span>
+          </label>
+
           <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
             1ページ表示
             <select
@@ -1038,6 +1085,10 @@ export default function PracticeSearchPanel(props: Props) {
                     const practiceCode = s(row.practiceCode);
                     const practice = practiceByCode[practiceCode];
                     const isSelected = selectedPracticeCode === practiceCode;
+                    const canMaintain = isPracticeOwnedByCurrentUser(
+                      practice,
+                      owner,
+                    );
 
                     return (
                       <tr key={`${s(row.abilityCode)}-${practiceCode}`}>
@@ -1075,14 +1126,47 @@ export default function PracticeSearchPanel(props: Props) {
                         <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top", fontSize: 12, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
                           {previewText(practice?.memo || practice?.transcriptText, 240) || "-"}
                         </td>
-                        <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedPracticeCode(isSelected ? "" : practiceCode)}
-                            disabled={!practiceCode}
+                        <td
+                          style={{
+                            padding: 8,
+                            borderBottom: "1px solid #f0f0f0",
+                            verticalAlign: "top",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: 6,
+                              minWidth: 110,
+                            }}
                           >
-                            {isSelected ? "候補を閉じる" : "候補を見る"}
-                          </button>
+                            <span
+                              style={{
+                                display: "inline-block",
+                                width: "fit-content",
+                                padding: "2px 7px",
+                                borderRadius: 999,
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: canMaintain ? "#166534" : "#666",
+                                background: canMaintain ? "#dcfce7" : "#f3f4f6",
+                              }}
+                            >
+                              {canMaintain ? "自分のPractice" : "閲覧のみ"}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedPracticeCode(
+                                  isSelected ? "" : practiceCode,
+                                )
+                              }
+                              disabled={!practiceCode}
+                            >
+                              {isSelected ? "候補を閉じる" : "候補を見る"}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1120,6 +1204,10 @@ export default function PracticeSearchPanel(props: Props) {
                 {pageRowsPractice.map((practice) => {
                   const practiceCode = s(practice.practice_code);
                   const isSelected = selectedPracticeCode === practiceCode;
+                  const canMaintain = isPracticeOwnedByCurrentUser(
+                    practice,
+                    owner,
+                  );
 
                   return (
                     <tr key={s(practice.id) || practiceCode}>
@@ -1160,14 +1248,47 @@ export default function PracticeSearchPanel(props: Props) {
                       <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", fontSize: 12, lineHeight: 1.6, minWidth: 320, whiteSpace: "pre-wrap", verticalAlign: "top" }}>
                         {previewText(practice.memo || practice.transcriptText, 260) || "-"}
                       </td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", verticalAlign: "top" }}>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedPracticeCode(isSelected ? "" : practiceCode)}
-                          disabled={!practiceCode}
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #f0f0f0",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 6,
+                            minWidth: 110,
+                          }}
                         >
-                          {isSelected ? "候補を閉じる" : "候補を見る"}
-                        </button>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              width: "fit-content",
+                              padding: "2px 7px",
+                              borderRadius: 999,
+                              fontSize: 12,
+                              fontWeight: 700,
+                              color: canMaintain ? "#166534" : "#666",
+                              background: canMaintain ? "#dcfce7" : "#f3f4f6",
+                            }}
+                          >
+                            {canMaintain ? "自分のPractice" : "閲覧のみ"}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedPracticeCode(
+                                isSelected ? "" : practiceCode,
+                              )
+                            }
+                            disabled={!practiceCode}
+                          >
+                            {isSelected ? "候補を閉じる" : "候補を見る"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
