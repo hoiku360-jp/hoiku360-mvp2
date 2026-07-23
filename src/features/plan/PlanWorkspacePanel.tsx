@@ -468,22 +468,38 @@ function monthFromDate(value: unknown): number | null {
   return Number.isInteger(month) && month >= 1 && month <= 12 ? month : null;
 }
 
-function practiceVisibleForTenant(
-  row: { tenantId?: string | null; publishScope?: string | null; visibility?: string | null },
+function practiceVisibleForUser(
+  row: {
+    tenantId?: string | null;
+    publishScope?: string | null;
+    visibility?: string | null;
+    owner?: string | null;
+  },
   targetTenantId: string,
+  currentOwner: string,
 ): boolean {
   const rowTenantId = s(row.tenantId);
   const publishScope = s(row.publishScope).toLowerCase();
   const visibility = s(row.visibility).toLowerCase();
+  const rowOwner = s(row.owner);
 
-  if (!targetTenantId) return true;
-  if (!rowTenantId || rowTenantId === targetTenantId) return true;
-  if (rowTenantId === "global" || rowTenantId === "common") return true;
+  // 非公開：登録者本人だけが閲覧・利用可能。
+  if (visibility === "private" || publishScope === "self") {
+    return Boolean(currentOwner && rowOwner === currentOwner);
+  }
 
-  // MVP2 common-practice rule:
-  // PracticeCode keeps tenantId for provenance, but publishScope=global means
-  // it can be used as a common practice candidate across tenants.
-  return publishScope === "global" || (visibility === "public" && publishScope === "global");
+  // 公開：全テナントから閲覧・利用可能。
+  if (publishScope === "global") {
+    return true;
+  }
+
+  // 園内：同一テナントのユーザーだけが閲覧・利用可能。
+  if (publishScope === "tenant") {
+    return Boolean(targetTenantId && rowTenantId === targetTenantId);
+  }
+
+  // 旧データ・未設定データは安全側で同一テナントだけに限定。
+  return Boolean(targetTenantId && rowTenantId === targetTenantId);
 }
 
 function activePracticeStatus(value: unknown): boolean {
@@ -1920,6 +1936,16 @@ export default function PlanWorkspacePanel(props: Props) {
     return map;
   }, [abilityPracticeLinks]);
 
+  const visibleImpactPracticeCodeSet = useMemo(
+    () =>
+      new Set(
+        impactPractices
+          .map((practice) => s(practice.practice_code))
+          .filter(Boolean),
+      ),
+    [impactPractices],
+  );
+
   const selectedImpactPracticeCodeSet = useMemo(
     () => new Set(selectedImpactPracticeCodes),
     [selectedImpactPracticeCodes],
@@ -1963,7 +1989,7 @@ export default function PlanWorkspacePanel(props: Props) {
       .filter((practice) => {
         const practiceCode = s(practice.practice_code);
         if (!practiceCode.startsWith("PR-")) return false;
-        if (!practiceVisibleForTenant(practice, tenantId)) return false;
+        if (!practiceVisibleForUser(practice, tenantId, owner)) return false;
         if (!activePracticeStatus(practice.status)) return false;
         return practiceFitsAgeAndMonth(practice, selectedAgeYears, impactTargetMonth);
       })
@@ -1997,7 +2023,7 @@ export default function PlanWorkspacePanel(props: Props) {
         if (a.linkCount !== b.linkCount) return b.linkCount - a.linkCount;
         return s(a.practice.name).localeCompare(s(b.practice.name), "ja");
       });
-  }, [impactCoverageRows, impactPractices, impactTargetMonth, linksByPracticeCode, requiredImpactAbilities, selectedAgeYears, tenantId]);
+  }, [impactCoverageRows, impactPractices, impactTargetMonth, linksByPracticeCode, owner, requiredImpactAbilities, selectedAgeYears, tenantId]);
 
   const selectedImpactPracticeRows = useMemo(
     () => impactCandidateRows.filter((row) => selectedImpactPracticeCodeSet.has(row.practiceCode)),
@@ -2037,8 +2063,12 @@ export default function PlanWorkspacePanel(props: Props) {
   );
 
   const weeklySelectedPracticeCodes = useMemo(
-    () => selectedPracticeCodesFromImpact(selectedWeeklyImpact?.selectedJson),
-    [selectedWeeklyImpact?.selectedJson],
+    () =>
+      selectedPracticeCodesFromImpact(selectedWeeklyImpact?.selectedJson)
+        .filter((practiceCode) =>
+          visibleImpactPracticeCodeSet.has(practiceCode),
+        ),
+    [selectedWeeklyImpact?.selectedJson, visibleImpactPracticeCodeSet],
   );
 
   const weeklyPracticeOptions = useMemo(() => {
@@ -2323,8 +2353,23 @@ export default function PlanWorkspacePanel(props: Props) {
         listAll<AbilityPracticeLinkRow>(abilityPracticeLinkModel.list),
       ]);
 
-      setImpactPractices(practiceRows);
-      setAbilityPracticeLinks(linkRows);
+      const visiblePracticeRows = practiceRows.filter((practice) =>
+        practiceVisibleForUser(practice, tenantId, owner),
+      );
+      const visiblePracticeCodes = new Set(
+        visiblePracticeRows
+          .map((practice) => s(practice.practice_code))
+          .filter(Boolean),
+      );
+
+      // Practice本体とAbilityリンクを同じ公開範囲で絞り込む。
+      // 非公開Practiceの名称だけでなく、Abilityスコアも候補計算へ混入させない。
+      setImpactPractices(visiblePracticeRows);
+      setAbilityPracticeLinks(
+        linkRows.filter((link) =>
+          visiblePracticeCodes.has(s(link.practiceCode)),
+        ),
+      );
     } catch (e) {
       console.error(e);
       setError(
@@ -2335,7 +2380,7 @@ export default function PlanWorkspacePanel(props: Props) {
     } finally {
       setImpactLoading(false);
     }
-  }, [abilityPracticeLinkModel.list, practiceCodeModel.list, tenantId]);
+  }, [abilityPracticeLinkModel.list, owner, practiceCodeModel.list, tenantId]);
 
   const loadExistingImpactAnalysis = useCallback(async (sourcePlanId: string) => {
     if (!tenantId || !sourcePlanId) {
@@ -2361,7 +2406,12 @@ export default function PlanWorkspacePanel(props: Props) {
       setImpactAnalysisId(s(latest?.id));
 
       if (latest?.selectedJson) {
-        setSelectedImpactPracticeCodes(selectedPracticeCodesFromImpact(latest.selectedJson));
+        setSelectedImpactPracticeCodes(
+          selectedPracticeCodesFromImpact(latest.selectedJson)
+            .filter((practiceCode) =>
+              visibleImpactPracticeCodeSet.has(practiceCode),
+            ),
+        );
       } else {
         setSelectedImpactPracticeCodes([]);
       }
@@ -2374,7 +2424,7 @@ export default function PlanWorkspacePanel(props: Props) {
       );
       setImpactAnalysisId("");
     }
-  }, [fiscalYear, impactAnalysisModel.list, tenantId]);
+  }, [fiscalYear, impactAnalysisModel.list, tenantId, visibleImpactPracticeCodeSet]);
 
 
 
@@ -2419,7 +2469,7 @@ export default function PlanWorkspacePanel(props: Props) {
     } finally {
       setWeeklyLoading(false);
     }
-  }, [fiscalYear, impactAnalysisModel.list, tenantId]);
+  }, [fiscalYear, impactAnalysisModel.list, tenantId, visibleImpactPracticeCodeSet]);
 
   const loadWeeklyPlanRows = useCallback(async (sourcePlanId: string) => {
     if (!tenantId || !selectedClassroomId || !sourcePlanId) {
