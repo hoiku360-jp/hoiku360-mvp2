@@ -551,18 +551,37 @@ export default function PracticeSearchPanel(props: Props) {
         );
 
         const nextMap: PracticeMap = {};
+
         for (const practiceCode of codes) {
           const found = await listPracticeCodes({
             practice_code: { eq: practiceCode },
           });
+
           if (found[0]) {
             nextMap[practiceCode] = found[0];
           }
         }
 
+        // PracticeCode本体を閲覧できた集計行だけを表示対象にする。
+        // 園内公開の別テナントPracticeや非公開Practiceのコード・集計値を
+        // Ability起点一覧に残さない。
+        const visibleRows = sorted.filter((row) => {
+          const practiceCode = s(row.practiceCode);
+
+          return Boolean(
+            practiceCode &&
+            nextMap[practiceCode],
+          );
+        });
+
         if (!ignore) {
-          setRows(sorted);
+          setRows(visibleRows);
           setPracticeByCode(nextMap);
+
+          setSelectedPracticeCode((current) =>
+            current && nextMap[current] ? current : "",
+          );
+
           setPage(0);
         }
       } catch (e) {
