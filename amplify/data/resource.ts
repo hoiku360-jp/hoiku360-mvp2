@@ -22,7 +22,10 @@ export const cleanupTranscriptTextFn = defineFunction({
   memoryMB: 512,
   runtime: 22,
   environment: {
-    BEDROCK_MODEL_ID: "jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    // Phase Haiku trial: use the Japan geographic inference profile so
+    // requests from Tokyo stay within Tokyo / Osaka. Other AI functions
+    // remain on Claude Sonnet 4.5 until their quality is evaluated.
+    BEDROCK_MODEL_ID: "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
   },
 });
 

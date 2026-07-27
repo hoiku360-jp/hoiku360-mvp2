@@ -19,6 +19,14 @@ type HandlerResult = {
   message: string;
 };
 
+type ClaudeInvocationResult = {
+  cleanedText: string;
+  modelId: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  latencyMs: number;
+};
+
 function stripCodeFence(text: string): string {
   const trimmed = text.trim();
 
@@ -62,10 +70,10 @@ async function invokeClaude(args: {
   transcriptText: string;
   childNames: string[];
   practiceCode?: string | null;
-}): Promise<string> {
+}): Promise<ClaudeInvocationResult> {
   const modelId =
     process.env.BEDROCK_MODEL_ID ||
-    "apac.anthropic.claude-3-5-sonnet-20241022-v2:0";
+    "jp.anthropic.claude-haiku-4-5-20251001-v1:0";
 
   const client = new BedrockRuntimeClient({
     region: process.env.AWS_REGION,
@@ -105,7 +113,9 @@ async function invokeClaude(args: {
     },
   });
 
+  const startedAt = Date.now();
   const response = await client.send(command);
+  const latencyMs = Date.now() - startedAt;
   const responseText = normalizeText(
     stripCodeFence(extractResponseText(response)),
   );
@@ -114,7 +124,28 @@ async function invokeClaude(args: {
     throw new Error("Claude response text was empty.");
   }
 
-  return responseText;
+  const usage = response.usage;
+  const inputTokens =
+    typeof usage?.inputTokens === "number" ? usage.inputTokens : null;
+  const outputTokens =
+    typeof usage?.outputTokens === "number" ? usage.outputTokens : null;
+
+  console.info("cleanup-transcript-text Bedrock invocation", {
+    modelId,
+    latencyMs,
+    inputTokens,
+    outputTokens,
+    inputCharacters: args.transcriptText.length,
+    outputCharacters: responseText.length,
+  });
+
+  return {
+    cleanedText: responseText,
+    modelId,
+    inputTokens,
+    outputTokens,
+    latencyMs,
+  };
 }
 
 export const handler: AppSyncResolverHandler<
@@ -133,11 +164,12 @@ export const handler: AppSyncResolverHandler<
         .filter(Boolean)
     : [];
 
-  const cleanedText = await invokeClaude({
+  const invocation = await invokeClaude({
     transcriptText: originalText,
     childNames,
     practiceCode: event.arguments.practiceCode ?? null,
   });
+  const cleanedText = invocation.cleanedText;
 
   return {
     originalText,
