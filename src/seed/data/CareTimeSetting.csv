@@ -1,0 +1,2 @@
+﻿id,tenantId,effectiveFrom,effectiveTo,openTime,closeTime,standardCareStartTime,standardCareEndTime,shortCareStartTime,shortCareEndTime,status,note
+,*,2026-04-01,,07:00,20:00,07:00,18:00,08:30,16:30,ACTIVE,"MVP2 initial setting. Short-care window 08:30-16:30 is provisional and can be changed per nursery."

@@ -16,6 +16,8 @@ import childClassroomEnrollmentCsv from "./seed/data/ChildClassroomEnrollment.cs
 import planPhraseCsv from "./seed/data/PlanPhrase.csv?raw";
 import planPhraseAbilityLinkCsv from "./seed/data/PlanPhraseAbilityLink.csv?raw";
 import abilityObservationHintCsv from "./seed/data/AbilityObservationHint.csv?raw";
+import careTimeSettingCsv from "./seed/data/CareTimeSetting.csv?raw";
+import childCareTimeCertificationCsv from "./seed/data/ChildCareTimeCertification.csv?raw";
 import PracticeRegisterPanel from "./features/practice-register/PracticeRegisterPanel";
 import PracticeSearchPanel from "./features/practice/PracticeSearchPanel";
 import PlanWorkspacePanel from "./features/plan/PlanWorkspacePanel";
@@ -112,6 +114,32 @@ type ChildClassroomEnrollmentRecord = {
   status: string;
 };
 
+type CareTimeSettingRecord = {
+  id: string;
+  tenantId: string;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+  openTime: string;
+  closeTime: string;
+  standardCareStartTime: string;
+  standardCareEndTime: string;
+  shortCareStartTime: string;
+  shortCareEndTime: string;
+  status: string;
+  note?: string | null;
+};
+
+type ChildCareTimeCertificationRecord = {
+  id: string;
+  tenantId: string;
+  childId: string;
+  careTimeType: string;
+  startDate: string;
+  endDate?: string | null;
+  status: string;
+  note?: string | null;
+};
+
 type AbilityCodeCreateInput = {
   id?: string;
   code: string;
@@ -146,6 +174,32 @@ type ChildClassroomEnrollmentCreateInput = {
   startDate: string;
   endDate?: string;
   status: string;
+};
+
+type CareTimeSettingCreateInput = {
+  id?: string;
+  tenantId: string;
+  effectiveFrom: string;
+  effectiveTo?: string;
+  openTime: string;
+  closeTime: string;
+  standardCareStartTime: string;
+  standardCareEndTime: string;
+  shortCareStartTime: string;
+  shortCareEndTime: string;
+  status: string;
+  note?: string;
+};
+
+type ChildCareTimeCertificationCreateInput = {
+  id?: string;
+  tenantId: string;
+  childId: string;
+  careTimeType: string;
+  startDate: string;
+  endDate?: string;
+  status: string;
+  note?: string;
 };
 
 type UserProfileRecord = {
@@ -312,6 +366,14 @@ const client = rawClient as unknown as {
       ChildClassroomEnrollmentRecord,
       ChildClassroomEnrollmentCreateInput
     >;
+    CareTimeSetting: ModelApi<
+      CareTimeSettingRecord,
+      CareTimeSettingCreateInput
+    >;
+    ChildCareTimeCertification: ModelApi<
+      ChildCareTimeCertificationRecord,
+      ChildCareTimeCertificationCreateInput
+    >;
     PlanPhrase: ModelIdentifierApi<
       PlanPhraseRecord,
       PlanPhraseCreateInput,
@@ -358,6 +420,8 @@ type SeedSummary = {
   abilityCodeCount: number;
   childCount: number;
   childClassroomEnrollmentCount: number;
+  careTimeSettingCount: number;
+  childCareTimeCertificationCount: number;
   planPhraseCount: number;
   planPhraseAbilityLinkCount: number;
   abilityObservationHintCount: number;
@@ -769,6 +833,194 @@ async function seedChildClassroomEnrollments(userSub: string, username: string) 
   return rows.length;
 }
 
+function deterministicCareTimeSettingId(
+  tenantId: string,
+  effectiveFrom: string
+): string {
+  return `${tenantId}-care-time-${effectiveFrom}`;
+}
+
+function deterministicChildCertificationId(
+  childId: string,
+  startDate: string
+): string {
+  return `${childId}-care-cert-${startDate}`;
+}
+
+async function seedCareTimeSettings(userSub: string, username: string) {
+  const rows = parseCsv(careTimeSettingCsv);
+  const tenantRes = await client.models.Tenant.list();
+  const activeTenants = (tenantRes.data ?? []).filter(
+    (tenant) => tenant.status === "ACTIVE"
+  );
+
+  let count = 0;
+
+  for (const row of rows) {
+    const requestedTenantId = requiredSeedValue(
+      row,
+      "tenantId",
+      userSub,
+      username
+    );
+    const targetTenants =
+      requestedTenantId === "*"
+        ? activeTenants
+        : activeTenants.filter((tenant) => tenant.id === requestedTenantId);
+
+    if (targetTenants.length === 0) {
+      throw new Error(
+        `CareTimeSetting seed error: tenantId=${requestedTenantId} was not found.`
+      );
+    }
+
+    const effectiveFrom = requiredSeedValue(
+      row,
+      "effectiveFrom",
+      userSub,
+      username
+    );
+
+    for (const tenant of targetTenants) {
+      const explicitId = optionalSeedValue(row.id, userSub, username);
+      const id =
+        explicitId && requestedTenantId !== "*"
+          ? explicitId
+          : deterministicCareTimeSettingId(tenant.id, effectiveFrom);
+
+      await upsertModel(client.models.CareTimeSetting, {
+        id,
+        tenantId: tenant.id,
+        effectiveFrom,
+        effectiveTo: optionalSeedValue(row.effectiveTo, userSub, username),
+        openTime: requiredSeedValue(row, "openTime", userSub, username),
+        closeTime: requiredSeedValue(row, "closeTime", userSub, username),
+        standardCareStartTime: requiredSeedValue(
+          row,
+          "standardCareStartTime",
+          userSub,
+          username
+        ),
+        standardCareEndTime: requiredSeedValue(
+          row,
+          "standardCareEndTime",
+          userSub,
+          username
+        ),
+        shortCareStartTime: requiredSeedValue(
+          row,
+          "shortCareStartTime",
+          userSub,
+          username
+        ),
+        shortCareEndTime: requiredSeedValue(
+          row,
+          "shortCareEndTime",
+          userSub,
+          username
+        ),
+        status:
+          optionalSeedValue(row.status, userSub, username) ?? "ACTIVE",
+        note: optionalSeedValue(row.note, userSub, username),
+      });
+
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+async function seedChildCareTimeCertifications(
+  userSub: string,
+  username: string
+) {
+  const rows = parseCsv(childCareTimeCertificationCsv);
+  const childRes = await client.models.Child.list();
+  const activeChildren = (childRes.data ?? []).filter(
+    (child) => child.status === "ACTIVE"
+  );
+
+  let count = 0;
+
+  for (const row of rows) {
+    const requestedTenantId = requiredSeedValue(
+      row,
+      "tenantId",
+      userSub,
+      username
+    );
+    const requestedChildId = requiredSeedValue(
+      row,
+      "childId",
+      userSub,
+      username
+    );
+
+    const tenantChildren = activeChildren.filter(
+      (child) => requestedTenantId === "*" || child.tenantId === requestedTenantId
+    );
+    const targetChildren = tenantChildren.filter(
+      (child) => requestedChildId === "*" || child.id === requestedChildId
+    );
+
+    if (targetChildren.length === 0) {
+      throw new Error(
+        [
+          "ChildCareTimeCertification seed error:",
+          `tenantId=${requestedTenantId}`,
+          `childId=${requestedChildId}`,
+          "was not found.",
+        ].join(" ")
+      );
+    }
+
+    const startDate = requiredSeedValue(
+      row,
+      "startDate",
+      userSub,
+      username
+    );
+    const careTimeType = requiredSeedValue(
+      row,
+      "careTimeType",
+      userSub,
+      username
+    ).toUpperCase();
+
+    if (careTimeType !== "STANDARD" && careTimeType !== "SHORT") {
+      throw new Error(
+        `ChildCareTimeCertification seed error: careTimeType=${careTimeType} must be STANDARD or SHORT.`
+      );
+    }
+
+    for (const child of targetChildren) {
+      const explicitId = optionalSeedValue(row.id, userSub, username);
+      const canUseExplicitId =
+        explicitId && requestedTenantId !== "*" && requestedChildId !== "*";
+      const id = canUseExplicitId
+        ? explicitId
+        : deterministicChildCertificationId(child.id, startDate);
+
+      await upsertModel(client.models.ChildCareTimeCertification, {
+        id,
+        tenantId: child.tenantId,
+        childId: child.id,
+        careTimeType,
+        startDate,
+        endDate: optionalSeedValue(row.endDate, userSub, username),
+        status:
+          optionalSeedValue(row.status, userSub, username) ?? "ACTIVE",
+        note: optionalSeedValue(row.note, userSub, username),
+      });
+
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
 async function upsertPlanPhrase(input: PlanPhraseCreateInput) {
   const existing = await client.models.PlanPhrase.get({
     planPhraseId: input.planPhraseId,
@@ -1049,6 +1301,7 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
       await cleanupLegacyBootstrapData();
 
       const tenantCount = await seedTenants(userSub, username);
+      const careTimeSettingCount = await seedCareTimeSettings(userSub, username);
       const classroomCount = await seedClassrooms(userSub, username);
       const userProfileCount = await seedUserProfiles(userSub, username);
       const staffAssignmentCount = await seedStaffAssignments(userSub, username);
@@ -1058,6 +1311,8 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
         userSub,
         username
       );
+      const childCareTimeCertificationCount =
+        await seedChildCareTimeCertifications(userSub, username);
       const planPhraseCount = await seedPlanPhrases(userSub, username);
       const planPhraseAbilityLinkCount = await seedPlanPhraseAbilityLinks(
         userSub,
@@ -1076,6 +1331,8 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
         abilityCodeCount,
         childCount,
         childClassroomEnrollmentCount,
+        careTimeSettingCount,
+        childCareTimeCertificationCount,
         planPhraseCount,
         planPhraseAbilityLinkCount,
         abilityObservationHintCount,
@@ -1093,6 +1350,8 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
           `AbilityCode=${abilityCodeCount}`,
           `Child=${childCount}`,
           `ChildClassroomEnrollment=${childClassroomEnrollmentCount}`,
+          `CareTimeSetting=${careTimeSettingCount}`,
+          `ChildCareTimeCertification=${childCareTimeCertificationCount}`,
           `PlanPhrase=${planPhraseCount}`,
           `PlanPhraseAbilityLink=${planPhraseAbilityLinkCount}`,
           `AbilityObservationHint=${abilityObservationHintCount}`,
@@ -1346,6 +1605,12 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
 
             <dt>ChildClassroomEnrollment</dt>
             <dd>{seedSummary.childClassroomEnrollmentCount}</dd>
+
+            <dt>CareTimeSetting</dt>
+            <dd>{seedSummary.careTimeSettingCount}</dd>
+
+            <dt>ChildCareTimeCertification</dt>
+            <dd>{seedSummary.childCareTimeCertificationCount}</dd>
 
             <dt>PlanPhrase</dt>
             <dd>{seedSummary.planPhraseCount}</dd>

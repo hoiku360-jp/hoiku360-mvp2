@@ -1,0 +1,4 @@
+﻿id,tenantId,childId,careTimeType,startDate,endDate,status,note
+,*,*,STANDARD,2026-04-01,,ACTIVE,"MVP2 initial default: all active children use STANDARD certification. Add a later row with the same childId and startDate to overwrite it as SHORT."
+# Example override (remove # and specify the actual tenantId / childId):
+# ,demo-tenant,CHILD_ID,SHORT,2026-04-01,,ACTIVE,"Short-care certification test child"

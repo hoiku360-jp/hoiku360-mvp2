@@ -192,6 +192,153 @@ const schema = a.schema({
     .authorization((allow) => [allow.authenticated()]),
 
   /**
+   * Phase 10-A:
+   * Nursery-wide care-time settings.
+   *
+   * One active row defines the applicable opening hours and the normal care
+   * window for STANDARD / SHORT certification during its effective period.
+   * Times are stored as HH:mm strings to match the current MVP2 UI convention.
+   */
+  CareTimeSetting: a
+    .model({
+      tenantId: a.id().required(),
+
+      effectiveFrom: a.date().required(),
+      effectiveTo: a.date(),
+
+      openTime: a.string().required(),
+      closeTime: a.string().required(),
+
+      standardCareStartTime: a.string().required(),
+      standardCareEndTime: a.string().required(),
+
+      shortCareStartTime: a.string().required(),
+      shortCareEndTime: a.string().required(),
+
+      status: a.string().required(), // ACTIVE / INACTIVE
+      note: a.string(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
+   * Phase 10-A:
+   * Child-specific care-time certification history.
+   *
+   * The effective date range allows a child to change between STANDARD and
+   * SHORT without rewriting past attendance calculations.
+   */
+  ChildCareTimeCertification: a
+    .model({
+      tenantId: a.id().required(),
+      childId: a.id().required(),
+
+      careTimeType: a.string().required(), // STANDARD / SHORT
+
+      startDate: a.date().required(),
+      endDate: a.date(),
+
+      status: a.string().required(), // ACTIVE / INACTIVE
+      note: a.string(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
+   * Phase 10-A:
+   * Attendance approval unit for one classroom and one date.
+   *
+   * The record is independent from PlanDocument / DailyReport so arrival and
+   * departure can continue after the daily report is completed.
+   */
+  AttendanceSheet: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+      classroomId: a.id().required(),
+      targetDate: a.date().required(),
+
+      status: a.string().required(), // DRAFT / COMPLETED / CONFIRMED / RETURNED / ARCHIVED
+
+      issuedAt: a.datetime(),
+
+      completedByUserId: a.id(),
+      completedByName: a.string(),
+      completedAt: a.datetime(),
+
+      confirmedByUserId: a.id(),
+      confirmedByName: a.string(),
+      confirmedAt: a.datetime(),
+
+      reviewHistoryJson: a.string(),
+      memo: a.string(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
+   * Phase 10-A:
+   * One child's attendance result for one date.
+   *
+   * Care-time fields are snapshots. Later changes to the nursery setting or
+   * the child's certification must not alter historical extension-care time.
+   */
+  AttendanceRecord: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+
+      attendanceSheetId: a.id().required(),
+      classroomId: a.id().required(),
+      childId: a.id().required(),
+      targetDate: a.date().required(),
+
+      childName: a.string().required(),
+      sortOrder: a.integer(),
+
+      careTimeType: a.string().required(), // STANDARD / SHORT snapshot
+      openTimeSnapshot: a.string().required(),
+      closeTimeSnapshot: a.string().required(),
+      careStartTimeSnapshot: a.string().required(),
+      careEndTimeSnapshot: a.string().required(),
+
+      status: a.string().required(), // NOT_ARRIVED / ARRIVED / DEPARTED / ABSENT
+
+      arrivalTime: a.string(),
+      arrivalRecordedAt: a.datetime(),
+      arrivalRecordedByUserId: a.id(),
+
+      departureTime: a.string(),
+      departureRecordedAt: a.datetime(),
+      departureRecordedByUserId: a.id(),
+
+      extensionBeforeMinutes: a.integer(),
+      extensionAfterMinutes: a.integer(),
+      extensionTotalMinutes: a.integer(),
+
+      absenceReason: a.string(),
+      lateReason: a.string(),
+      earlyDepartureReason: a.string(),
+
+      actualPickupRelation: a.string(),
+      actualPickupName: a.string(),
+
+      memo: a.string(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
    * Phase 1-A:
    * Ability master.
    *
