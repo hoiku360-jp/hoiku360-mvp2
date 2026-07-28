@@ -22,6 +22,7 @@ import PracticeRegisterPanel from "./features/practice-register/PracticeRegister
 import PracticeSearchPanel from "./features/practice/PracticeSearchPanel";
 import PlanWorkspacePanel from "./features/plan/PlanWorkspacePanel";
 import DoWorkspacePanel from "./features/do/DoWorkspacePanel";
+import AttendanceWorkspacePanel from "./features/attendance/AttendanceWorkspacePanel";
 import CheckWorkspacePanel from "./features/check/CheckWorkspacePanel";
 import ChildWeeklyWorkspacePanel from "./features/check/ChildWeeklyWorkspacePanel";
 import ChildProgressRecordPanel from "./features/check/ChildProgressRecordPanel";
@@ -405,6 +406,7 @@ type AppUserContext = {
 type TabKey =
   | "home"
   | "doWorkspace"
+  | "attendance"
   | "checkWorkspace"
   | "childWeekly"
   | "childProgress"
@@ -1430,6 +1432,14 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
 
           <button
             type="button"
+            onClick={() => setTab("attendance")}
+            disabled={!context?.tenantId || tab === "attendance"}
+          >
+            登園・降園管理
+          </button>
+
+          <button
+            type="button"
             onClick={() => setTab("checkWorkspace")}
             disabled={!context?.tenantId || tab === "checkWorkspace"}
           >
@@ -1488,6 +1498,22 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
       {tab === "doWorkspace" && context?.tenantId && (
         <section className="panel">
           <DoWorkspacePanel
+            owner={practiceOwner}
+            ownerName={context.displayName}
+            ownerRole={context.role}
+            tenantId={practiceTenantId}
+            tenantName={context.tenantName}
+            fiscalYear={CURRENT_FISCAL_YEAR}
+            currentClassroomId={currentClassroomId}
+            allowedClassroomIds={context.classroomIds}
+            isSchoolScope={isSchoolScope}
+          />
+        </section>
+      )}
+
+      {tab === "attendance" && context?.tenantId && (
+        <section className="panel">
+          <AttendanceWorkspacePanel
             owner={practiceOwner}
             ownerName={context.displayName}
             ownerRole={context.role}
