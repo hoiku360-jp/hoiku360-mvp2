@@ -3,3 +3,4 @@
 # Example override (remove # and specify the actual tenantId / childId):
 # ,demo-tenant,CHILD_ID,SHORT,2026-04-01,,ACTIVE,"Short-care certification test child"
 ,demo-tenant,child-demo-019,SHORT,2026-04-01,,ACTIVE,保育短時間認定
+,demo-tenant,child-demo-013,SHORT,2026-04-01,,ACTIVE,保育短時間認定
