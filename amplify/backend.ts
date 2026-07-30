@@ -4,6 +4,7 @@ import { auth } from "./auth/resource";
 import {
   data,
   cleanupTranscriptTextFn,
+  generateParentNotebookNoticeFn,
   analyzePracticeFn,
   suggestPracticeLinksFn,
   registerPracticeLinksFn,
@@ -20,6 +21,7 @@ const backend = defineBackend({
   auth,
   data,
   cleanupTranscriptTextFn,
+  generateParentNotebookNoticeFn,
   analyzePracticeFn,
   suggestPracticeLinksFn,
   registerPracticeLinksFn,
@@ -40,10 +42,16 @@ const bedrockInvokePolicy = new PolicyStatement({
   resources: [
     "arn:aws:bedrock:*:*:inference-profile/jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
     "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "arn:aws:bedrock:*:*:inference-profile/jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
   ],
 });
 
 backend.cleanupTranscriptTextFn.resources.lambda.addToRolePolicy(
+  bedrockInvokePolicy,
+);
+
+backend.generateParentNotebookNoticeFn.resources.lambda.addToRolePolicy(
   bedrockInvokePolicy,
 );
 

@@ -36,6 +36,22 @@ type SendParentNotebookEmailsArgs = {
   baseUrl?: string | null;
 };
 
+type GenerateParentNotebookNoticeArgs = {
+  parentNotebookSheetId: string;
+  manualNote?: string | null;
+};
+
+type GenerateParentNotebookNoticeResult = {
+  parentNotebookSheetId?: string | null;
+  sourceDailyPlanId?: string | null;
+  draftText?: string | null;
+  sourceJson?: string | null;
+  status?: string | null;
+  aiModel?: string | null;
+  generatedAt?: string | null;
+  message?: string | null;
+};
+
 type ParentNotebookEmailSendResult = {
   parentNotebookEntryId?: string | null;
   childId?: string | null;
@@ -74,6 +90,10 @@ type ParentNotebookClient = {
     ParentNotebookEntry: ModelApi<ParentNotebookEntryRow>;
   };
   mutations?: {
+    generateParentNotebookNotice?: OperationRunner<
+      GenerateParentNotebookNoticeArgs,
+      GenerateParentNotebookNoticeResult
+    >;
     sendParentNotebookEmails?: OperationRunner<
       SendParentNotebookEmailsArgs,
       SendParentNotebookEmailsResult
@@ -329,6 +349,7 @@ export default function ParentNotebookWorkspacePanel(props: {
   const [workspaceRows, setWorkspaceRows] = useState<ChildWorkspaceRow[]>([]);
   const [sheet, setSheet] = useState<ParentNotebookSheetRow | null>(null);
   const [noticeDraft, setNoticeDraft] = useState("");
+  const [aiManualNote, setAiManualNote] = useState("");
   const [contactDrafts, setContactDrafts] = useState<
     Record<string, ContactDraft>
   >({});
@@ -336,6 +357,7 @@ export default function ParentNotebookWorkspacePanel(props: {
   const [loadingClassrooms, setLoadingClassrooms] = useState(false);
   const [loadingWorkspace, setLoadingWorkspace] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [generatingNotice, setGeneratingNotice] = useState(false);
   const [issuing, setIssuing] = useState(false);
   const [sendingEmails, setSendingEmails] = useState(false);
   const [savingContactChildId, setSavingContactChildId] = useState("");
@@ -593,6 +615,124 @@ export default function ParentNotebookWorkspacePanel(props: {
       );
     } finally {
       setLoadingWorkspace(false);
+    }
+  }
+
+  async function generateParentNotebookNotice() {
+    if (!selectedClassroomId || !targetDate) {
+      setMessage("対象日と対象クラスを指定してください。");
+      return;
+    }
+
+    if (["CLOSED", "ARCHIVED"].includes(s(sheet?.status).toUpperCase())) {
+      setMessage("締切済みまたはアーカイブ済みの連絡帳ではAI生成できません。");
+      return;
+    }
+
+    if (lockedEntryCount > 0) {
+      setMessage(
+        "送信済みまたは回答済みの児童がいるため、AIで連絡文を書き換えることはできません。",
+      );
+      return;
+    }
+
+    const runner = client.mutations?.generateParentNotebookNotice;
+    if (!runner) {
+      setMessage(
+        "generateParentNotebookNotice mutationが見つかりません。resource.tsとSandboxを確認してください。",
+      );
+      return;
+    }
+
+    setGeneratingNotice(true);
+    setMessage("");
+
+    try {
+      const sheetId = sheetIdFor(tenantId, selectedClassroomId, targetDate);
+      let currentSheet = sheet;
+
+      // The Lambda starts from a real draft Sheet. Save the current textarea
+      // first so an existing draft can also be refined by Haiku.
+      if (!currentSheet) {
+        const createResult = await client.models.ParentNotebookSheet.create({
+          id: sheetId,
+          tenantId,
+          fiscalYear,
+          classroomId: selectedClassroomId,
+          targetDate,
+          status: "DRAFT",
+          noticeDraftText: noticeDraft.trim() || null,
+          createdByUserId: userId,
+          updatedByUserId: userId,
+        });
+
+        if (!createResult.data) {
+          throw new Error(
+            formatErrors(
+              createResult.errors,
+              "AI生成用の連絡帳下書き作成に失敗しました。",
+            ),
+          );
+        }
+        currentSheet = createResult.data;
+      } else if (s(currentSheet.noticeDraftText) !== noticeDraft.trim()) {
+        const updateResult = await client.models.ParentNotebookSheet.update({
+          id: currentSheet.id,
+          noticeDraftText: noticeDraft.trim() || null,
+          updatedByUserId: userId,
+        });
+
+        if (!updateResult.data) {
+          throw new Error(
+            formatErrors(
+              updateResult.errors,
+              "AI生成前の下書き保存に失敗しました。",
+            ),
+          );
+        }
+        currentSheet = updateResult.data;
+      }
+
+      const data = await runOperation<
+        GenerateParentNotebookNoticeArgs,
+        GenerateParentNotebookNoticeResult
+      >(runner, {
+        parentNotebookSheetId: sheetId,
+        manualNote: aiManualNote.trim() || undefined,
+      });
+
+      const draftText = s(data.draftText);
+      if (!draftText) {
+        throw new Error("AI生成結果が空でした。");
+      }
+
+      const generatedAt = s(data.generatedAt) || new Date().toISOString();
+      setNoticeDraft(draftText);
+      setSheet({
+        ...currentSheet,
+        sourceDailyPlanId:
+          s(data.sourceDailyPlanId) || currentSheet.sourceDailyPlanId,
+        noticeDraftText: draftText,
+        noticeSourceJson: data.sourceJson ?? currentSheet.noticeSourceJson,
+        generatedAt,
+        updatedByUserId: userId,
+      } as ParentNotebookSheetRow);
+
+      setMessage(
+        data.message ||
+          `Claude Haikuで園からの連絡文を生成しました。生成=${formatDateTime(
+            generatedAt,
+          )}`,
+      );
+    } catch (error) {
+      console.error(error);
+      setMessage(
+        `AI連絡文生成エラー: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setGeneratingNotice(false);
     }
   }
 
@@ -1036,7 +1176,7 @@ export default function ParentNotebookWorkspacePanel(props: {
           <h2 style={{ margin: 0 }}>保護者連絡帳</h2>
           <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
             対象日の在籍児童を読み込み、園からの連絡を保存して児童別連絡帳を発行します。
-            Phase 11-Dでは、保護者回答の内容確認、未回答一覧、園確認済み処理を行います。
+            Phase 11-Fでは、対象日の日案をもとにClaude Haikuで園からの連絡文の下書きを生成できます。
           </div>
         </div>
 
@@ -1132,11 +1272,30 @@ export default function ParentNotebookWorkspacePanel(props: {
           </span>
         </div>
 
+        <label style={{ display: "grid", gap: 4 }}>
+          <span style={{ fontWeight: 700 }}>AI生成用の補足（任意）</span>
+          <textarea
+            value={aiManualNote}
+            onChange={(event) => setAiManualNote(event.target.value)}
+            placeholder="例：明日は水遊びです。水着、タオル、着替えの案内を必ず含めてください。"
+            disabled={generatingNotice || savingDraft || issuing || sendingEmails}
+            style={{
+              width: "100%",
+              minHeight: 72,
+              boxSizing: "border-box",
+              resize: "vertical",
+            }}
+          />
+          <span style={{ color: "#666", fontSize: 12 }}>
+            対象日の確定済み日案を優先して参照します。補足はAI入力にだけ使用し、保護者へ自動送信されません。
+          </span>
+        </label>
+
         <textarea
           value={noticeDraft}
           onChange={(event) => setNoticeDraft(event.target.value)}
           placeholder="例：明日は水遊びを予定しています。水着、タオル、着替えをご用意ください。"
-          disabled={savingDraft || issuing || sendingEmails}
+          disabled={generatingNotice || savingDraft || issuing || sendingEmails}
           style={{
             width: "100%",
             minHeight: 140,
@@ -1148,8 +1307,22 @@ export default function ParentNotebookWorkspacePanel(props: {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
             type="button"
+            onClick={generateParentNotebookNotice}
+            disabled={
+              generatingNotice ||
+              savingDraft ||
+              issuing ||
+              sendingEmails ||
+              !selectedClassroomId ||
+              lockedEntryCount > 0
+            }
+          >
+            {generatingNotice ? "AI生成中..." : "AI連絡文を生成（Haiku）"}
+          </button>
+          <button
+            type="button"
             onClick={saveNoticeDraft}
-            disabled={savingDraft || issuing || sendingEmails || !selectedClassroomId}
+            disabled={generatingNotice || savingDraft || issuing || sendingEmails || !selectedClassroomId}
           >
             {savingDraft ? "保存中..." : "下書き保存"}
           </button>
@@ -1157,6 +1330,7 @@ export default function ParentNotebookWorkspacePanel(props: {
             type="button"
             onClick={issueParentNotebooks}
             disabled={
+              generatingNotice ||
               issuing ||
               savingDraft ||
               sendingEmails ||
@@ -1175,6 +1349,7 @@ export default function ParentNotebookWorkspacePanel(props: {
             onClick={sendParentNotebookEmails}
             disabled={
               sendingEmails ||
+              generatingNotice ||
               issuing ||
               !sheet ||
               s(sheet.status).toUpperCase() !== "ISSUED" ||
@@ -1184,6 +1359,15 @@ export default function ParentNotebookWorkspacePanel(props: {
             {sendingEmails ? "メール送信中..." : "未送信へメール送信"}
           </button>
         </div>
+
+        {sheet?.generatedAt ? (
+          <div style={{ color: "#555", fontSize: 13 }}>
+            AI生成: <b>{formatDateTime(sheet.generatedAt)}</b>
+            {sheet.sourceDailyPlanId ? (
+              <> / 参照日案: <code>{sheet.sourceDailyPlanId}</code></>
+            ) : null}
+          </div>
+        ) : null}
 
         {lockedEntryCount > 0 ? (
           <div style={{ color: "#92400e", fontSize: 13 }}>

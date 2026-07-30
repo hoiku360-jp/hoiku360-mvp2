@@ -29,6 +29,17 @@ export const cleanupTranscriptTextFn = defineFunction({
   },
 });
 
+export const generateParentNotebookNoticeFn = defineFunction({
+  name: "generate-parent-notebook-notice",
+  entry: "../functions/generate-parent-notebook-notice/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 512,
+  runtime: 22,
+  environment: {
+    BEDROCK_MODEL_ID: "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+  },
+});
+
 export const analyzePracticeFn = defineFunction({
   name: "analyze-practice",
   entry: "../functions/practice-analyze/handler.ts",
@@ -610,6 +621,27 @@ const schema = a.schema({
     .returns(a.ref("CleanupTranscriptTextResponse"))
     .authorization((allow) => [allow.authenticated()])
     .handler(a.handler.function(cleanupTranscriptTextFn)),
+
+  GenerateParentNotebookNoticeResponse: a.customType({
+    parentNotebookSheetId: a.id().required(),
+    sourceDailyPlanId: a.id(),
+    draftText: a.string().required(),
+    sourceJson: a.string(),
+    status: a.string().required(),
+    aiModel: a.string(),
+    generatedAt: a.datetime(),
+    message: a.string(),
+  }),
+
+  generateParentNotebookNotice: a
+    .mutation()
+    .arguments({
+      parentNotebookSheetId: a.id().required(),
+      manualNote: a.string(),
+    })
+    .returns(a.ref("GenerateParentNotebookNoticeResponse"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(generateParentNotebookNoticeFn)),
 
   /**
    * Phase 11-A2:
@@ -1422,6 +1454,7 @@ AbilityPracticeAgg: a
 })
  .authorization((allow) => [
    allow.resource(cleanupTranscriptTextFn),
+   allow.resource(generateParentNotebookNoticeFn),
    allow.resource(analyzePracticeFn),
    allow.resource(suggestPracticeLinksFn),
    allow.resource(registerPracticeLinksFn),
