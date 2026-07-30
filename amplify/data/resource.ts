@@ -109,6 +109,34 @@ export const generateChildProgressRecordFn = defineFunction({
   },
 });
 
+export const getParentNotebookContextFn = defineFunction({
+  name: "get-parent-notebook-context",
+  entry: "../functions/get-parent-notebook-context/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  runtime: 22,
+});
+
+export const submitParentNotebookReplyFn = defineFunction({
+  name: "submit-parent-notebook-reply",
+  entry: "../functions/submit-parent-notebook-reply/handler.ts",
+  timeoutSeconds: 30,
+  memoryMB: 512,
+  runtime: 22,
+});
+
+export const sendParentNotebookEmailsFn = defineFunction({
+  name: "send-parent-notebook-emails",
+  entry: "../functions/send-parent-notebook-emails/handler.ts",
+  timeoutSeconds: 60,
+  memoryMB: 512,
+  runtime: 22,
+  environment: {
+    PARENT_NOTEBOOK_FROM_EMAIL: "demo@hoiku360.jp",
+    PARENT_NOTEBOOK_TOKEN_EXPIRES_DAYS: "14",
+  },
+});
+
 const schema = a.schema({
   Tenant: a
     .model({
@@ -339,6 +367,176 @@ const schema = a.schema({
     ]),
 
   /**
+   * Phase 11-A1:
+   * Guardian contact used for parent-notebook delivery.
+   *
+   * A child can have more than one guardian contact. The UI / delivery Lambda
+   * selects active rows where receiveParentNotebook is true, preferring the
+   * primary contact. Guardian details are snapshotted into ParentNotebookEntry
+   * when the notebook is issued so later contact changes do not rewrite the
+   * historical delivery record.
+   */
+  ChildGuardianContact: a
+    .model({
+      tenantId: a.id().required(),
+      childId: a.id().required(),
+
+      relation: a.string().required(),
+      guardianName: a.string().required(),
+      email: a.email().required(),
+
+      isPrimary: a.boolean().required(),
+      receiveParentNotebook: a.boolean().required(),
+
+      status: a.string().required(), // ACTIVE / INACTIVE
+      note: a.string(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
+   * Phase 11-A1:
+   * Parent-notebook issue unit for one classroom and one date.
+   *
+   * The notebook is independent from PlanDocument. sourceDailyPlanId and
+   * sourceSnapshotJson may reference the daily plan used to prepare the
+   * parent-facing notice, while noticeText remains the historical snapshot
+   * that was actually issued.
+   */
+  ParentNotebookSheet: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+      classroomId: a.id().required(),
+      targetDate: a.date().required(),
+
+      status: a.string().required(), // DRAFT / ISSUED / CLOSED / ARCHIVED
+
+      sourceDailyPlanId: a.id(),
+      sourceSnapshotJson: a.string(),
+
+      noticeDraftText: a.string(),
+      noticeText: a.string(),
+      noticeSourceJson: a.string(),
+
+      generatedAt: a.datetime(),
+      issuedAt: a.datetime(),
+      issuedByUserId: a.id(),
+      issuedByName: a.string(),
+
+      closedAt: a.datetime(),
+      closedByUserId: a.id(),
+      closedByName: a.string(),
+
+      memo: a.string(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
+   * Phase 11-A1:
+   * One child's delivery and latest parent response for one notebook sheet.
+   *
+   * The row is created with a deterministic id:
+   *   parent-notebook-entry-{parentNotebookSheetId}-{childId}
+   * The first parent submission creates the response values and later
+   * submissions update this same row while incrementing responseRevision.
+   */
+  ParentNotebookEntry: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+
+      parentNotebookSheetId: a.id().required(),
+      classroomId: a.id().required(),
+      childId: a.id().required(),
+      childName: a.string().required(),
+      targetDate: a.date().required(),
+      sortOrder: a.integer(),
+
+      guardianContactId: a.id(),
+      guardianRelationSnapshot: a.string(),
+      guardianNameSnapshot: a.string(),
+      guardianEmailSnapshot: a.email(),
+
+      deliveryStatus: a.string().required(), // NOT_SENT / PENDING / SENT / FAILED / SKIPPED
+      sentAt: a.datetime(),
+      emailMessageId: a.string(),
+      sendErrorMessage: a.string(),
+
+      responseStatus: a.string().required(), // NOT_SUBMITTED / SUBMITTED / CONFIRMED
+      okSigned: a.boolean(),
+
+      attendancePlanType: a.string(), // NORMAL / ABSENT / LATE / EARLY_DEPARTURE / OTHER
+      plannedArrivalTime: a.string(),
+      plannedDepartureTime: a.string(),
+
+      plannedPickupRelation: a.string(),
+      plannedPickupName: a.string(),
+      plannedPickupTime: a.string(),
+
+      homeNote: a.string(),
+      parentMessage: a.string(),
+
+      submittedAt: a.datetime(),
+      responseRevision: a.integer(),
+
+      confirmedAt: a.datetime(),
+      confirmedByUserId: a.id(),
+      confirmedByName: a.string(),
+
+      userAgent: a.string(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
+   * Phase 11-A1:
+   * Hashed public-access token for one ParentNotebookEntry.
+   *
+   * Plain tokens are never stored. Reissuing the URL updates tokenHash and
+   * increments tokenVersion on the same deterministic row so older URLs stop
+   * resolving automatically.
+   */
+  ParentNotebookAccessToken: a
+    .model({
+      tenantId: a.id().required(),
+
+      parentNotebookSheetId: a.id().required(),
+      parentNotebookEntryId: a.id().required(),
+      classroomId: a.id().required(),
+      childId: a.id().required(),
+      targetDate: a.date().required(),
+
+      tokenHash: a.string().required(),
+      tokenVersion: a.integer().required(),
+
+      status: a.string().required(), // ACTIVE / REVOKED / EXPIRED
+      issuedAt: a.datetime().required(),
+      expiresAt: a.datetime(),
+      issuedByUserId: a.id(),
+
+      revokedAt: a.datetime(),
+      revokedByUserId: a.id(),
+      memo: a.string(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
    * Phase 1-A:
    * Ability master.
    *
@@ -412,6 +610,106 @@ const schema = a.schema({
     .returns(a.ref("CleanupTranscriptTextResponse"))
     .authorization((allow) => [allow.authenticated()])
     .handler(a.handler.function(cleanupTranscriptTextFn)),
+
+  /**
+   * Phase 11-A2:
+   * Minimal public context for one child-specific parent-notebook URL.
+   * The Lambda validates the token hash and returns only the issued notice and
+   * that child's latest response values. Guardian contact data is never exposed.
+   */
+  GetParentNotebookContextResponse: a.customType({
+    parentNotebookSheetId: a.id(),
+    parentNotebookEntryId: a.id(),
+    classroomId: a.id(),
+    childId: a.id(),
+    childName: a.string(),
+    targetDate: a.date(),
+    noticeText: a.string(),
+
+    responseStatus: a.string(),
+    attendancePlanType: a.string(),
+    plannedArrivalTime: a.string(),
+    plannedDepartureTime: a.string(),
+    plannedPickupRelation: a.string(),
+    plannedPickupName: a.string(),
+    plannedPickupTime: a.string(),
+    homeNote: a.string(),
+    parentMessage: a.string(),
+    submittedAt: a.datetime(),
+    responseRevision: a.integer(),
+
+    status: a.string().required(),
+    message: a.string(),
+  }),
+
+  getParentNotebookContext: a
+    .mutation()
+    .arguments({
+      replyToken: a.string().required(),
+    })
+    .returns(a.ref("GetParentNotebookContextResponse"))
+    .authorization((allow) => [allow.publicApiKey(), allow.authenticated()])
+    .handler(a.handler.function(getParentNotebookContextFn)),
+
+  SubmitParentNotebookReplyResponse: a.customType({
+    parentNotebookEntryId: a.id(),
+    responseStatus: a.string().required(),
+    responseRevision: a.integer().required(),
+    submittedAt: a.datetime(),
+    status: a.string().required(),
+    message: a.string(),
+  }),
+
+  submitParentNotebookReply: a
+    .mutation()
+    .arguments({
+      replyToken: a.string().required(),
+      okSigned: a.boolean().required(),
+
+      attendancePlanType: a.string().required(),
+      plannedArrivalTime: a.string(),
+      plannedDepartureTime: a.string(),
+
+      plannedPickupRelation: a.string(),
+      plannedPickupName: a.string(),
+      plannedPickupTime: a.string(),
+
+      homeNote: a.string(),
+      parentMessage: a.string(),
+      userAgent: a.string(),
+    })
+    .returns(a.ref("SubmitParentNotebookReplyResponse"))
+    .authorization((allow) => [allow.publicApiKey(), allow.authenticated()])
+    .handler(a.handler.function(submitParentNotebookReplyFn)),
+
+  ParentNotebookEmailSendResult: a.customType({
+    parentNotebookEntryId: a.id(),
+    childId: a.id(),
+    childName: a.string(),
+    email: a.email(),
+    status: a.string().required(),
+    message: a.string(),
+  }),
+
+  SendParentNotebookEmailsResponse: a.customType({
+    parentNotebookSheetId: a.id().required(),
+    sentCount: a.integer().required(),
+    failedCount: a.integer().required(),
+    skippedCount: a.integer().required(),
+    status: a.string().required(),
+    message: a.string(),
+    results: a.ref("ParentNotebookEmailSendResult").array(),
+  }),
+
+  sendParentNotebookEmails: a
+    .mutation()
+    .arguments({
+      parentNotebookSheetId: a.id().required(),
+      baseUrl: a.string(),
+    })
+    .returns(a.ref("SendParentNotebookEmailsResponse"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(sendParentNotebookEmailsFn)),
 
 
   AnalyzeDailyPracticeObservationResponse: a.customType({
@@ -1131,6 +1429,9 @@ AbilityPracticeAgg: a
    allow.resource(analyzeDailyPracticeObservationFn),
    allow.resource(generateChildWeekendLetterFn),
    allow.resource(generateChildProgressRecordFn),
+   allow.resource(getParentNotebookContextFn),
+   allow.resource(submitParentNotebookReplyFn),
+   allow.resource(sendParentNotebookEmailsFn),
 ]);
 
 export type Schema = ClientSchema<typeof schema>;
@@ -1139,5 +1440,8 @@ export const data = defineData({
   schema,
   authorizationModes: {
     defaultAuthorizationMode: "userPool",
+    apiKeyAuthorizationMode: {
+      expiresInDays: 30,
+    },
   },
 });

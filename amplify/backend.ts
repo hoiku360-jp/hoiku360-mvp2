@@ -11,6 +11,9 @@ import {
   analyzeDailyPracticeObservationFn,
   generateChildWeekendLetterFn,
   generateChildProgressRecordFn,
+  getParentNotebookContextFn,
+  submitParentNotebookReplyFn,
+  sendParentNotebookEmailsFn,
 } from "./data/resource";
 
 const backend = defineBackend({
@@ -24,6 +27,9 @@ const backend = defineBackend({
   analyzeDailyPracticeObservationFn,
   generateChildWeekendLetterFn,
   generateChildProgressRecordFn,
+  getParentNotebookContextFn,
+  submitParentNotebookReplyFn,
+  sendParentNotebookEmailsFn,
 });
 
 const bedrockInvokePolicy = new PolicyStatement({
@@ -32,13 +38,8 @@ const bedrockInvokePolicy = new PolicyStatement({
     "bedrock:InvokeModelWithResponseStream",
   ],
   resources: [
-    // Existing Sonnet 4.5 functions.
     "arn:aws:bedrock:*:*:inference-profile/jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
     "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0",
-
-    // Phase Haiku trial: cleanup-transcript-text only.
-    "arn:aws:bedrock:*:*:inference-profile/jp.anthropic.claude-haiku-4-5-20251001-v1:0",
-    "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
   ],
 });
 
@@ -66,3 +67,11 @@ backend.generateChildWeekendLetterFn.resources.lambda.addToRolePolicy(
 backend.generateChildProgressRecordFn.resources.lambda.addToRolePolicy(
   bedrockInvokePolicy,
 );
+
+backend.sendParentNotebookEmailsFn.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail", "ses:SendRawEmail"],
+    resources: ["*"],
+  }),
+);
+

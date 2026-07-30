@@ -1,0 +1,1338 @@
+import { useEffect, useMemo, useState } from "react";
+import { generateClient } from "aws-amplify/data";
+import type { Schema } from "../../../amplify/data/resource";
+
+type ModelError = {
+  message?: string | null;
+};
+
+type ModelResponse<TRow> = {
+  data?: TRow | null;
+  errors?: ModelError[] | null;
+};
+
+type ListResponse<TRow> = {
+  data?: TRow[] | null;
+  nextToken?: string | null;
+  errors?: ModelError[] | null;
+};
+
+type ModelApi<TRow> = {
+  get(input: Record<string, unknown>): Promise<ModelResponse<TRow>>;
+  list(options?: Record<string, unknown>): Promise<ListResponse<TRow>>;
+  create(input: Record<string, unknown>): Promise<ModelResponse<TRow>>;
+  update(input: Record<string, unknown>): Promise<ModelResponse<TRow>>;
+};
+
+type ClassroomRow = Schema["Classroom"]["type"];
+type ChildRow = Schema["Child"]["type"];
+type EnrollmentRow = Schema["ChildClassroomEnrollment"]["type"];
+type GuardianContactRow = Schema["ChildGuardianContact"]["type"];
+type ParentNotebookSheetRow = Schema["ParentNotebookSheet"]["type"];
+type ParentNotebookEntryRow = Schema["ParentNotebookEntry"]["type"];
+
+type SendParentNotebookEmailsArgs = {
+  parentNotebookSheetId: string;
+  baseUrl?: string | null;
+};
+
+type ParentNotebookEmailSendResult = {
+  parentNotebookEntryId?: string | null;
+  childId?: string | null;
+  childName?: string | null;
+  email?: string | null;
+  status?: string | null;
+  message?: string | null;
+};
+
+type SendParentNotebookEmailsResult = {
+  parentNotebookSheetId?: string | null;
+  sentCount?: number | null;
+  failedCount?: number | null;
+  skippedCount?: number | null;
+  status?: string | null;
+  message?: string | null;
+  results?: (ParentNotebookEmailSendResult | null)[] | null;
+};
+
+type OperationEnvelope<TData> = {
+  data?: TData | null;
+  errors?: ModelError[] | null;
+};
+
+type OperationRunner<TArgs, TData> = (
+  args: TArgs | { input: TArgs },
+) => Promise<OperationEnvelope<TData> | TData>;
+
+type ParentNotebookClient = {
+  models: {
+    Classroom: ModelApi<ClassroomRow>;
+    Child: ModelApi<ChildRow>;
+    ChildClassroomEnrollment: ModelApi<EnrollmentRow>;
+    ChildGuardianContact: ModelApi<GuardianContactRow>;
+    ParentNotebookSheet: ModelApi<ParentNotebookSheetRow>;
+    ParentNotebookEntry: ModelApi<ParentNotebookEntryRow>;
+  };
+  mutations?: {
+    sendParentNotebookEmails?: OperationRunner<
+      SendParentNotebookEmailsArgs,
+      SendParentNotebookEmailsResult
+    >;
+  };
+};
+
+type ContactDraft = {
+  contactId: string;
+  relation: string;
+  guardianName: string;
+  email: string;
+};
+
+type ChildWorkspaceRow = {
+  child: ChildRow;
+  enrollment: EnrollmentRow;
+  contact: GuardianContactRow | null;
+  entry: ParentNotebookEntryRow | null;
+};
+
+const DEFAULT_RELATION = "母";
+
+function s(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function tomorrowYYYYMMDD(): string {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateTime(value?: string | null): string {
+  const text = s(value);
+  if (!text) return "-";
+
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return text;
+  return date.toLocaleString("ja-JP");
+}
+
+function formatErrors(
+  errors?: ModelError[] | null,
+  fallback = "処理に失敗しました。",
+): string {
+  const messages = (errors ?? [])
+    .map((error) => s(error.message))
+    .filter(Boolean);
+  return messages.length > 0 ? messages.join("\n") : fallback;
+}
+
+function getOperationErrors<TData>(
+  response: OperationEnvelope<TData> | TData,
+): ModelError[] | null {
+  if (!response || typeof response !== "object" || !("errors" in response)) {
+    return null;
+  }
+  return (response as OperationEnvelope<TData>).errors ?? null;
+}
+
+function getOperationData<TData>(
+  response: OperationEnvelope<TData> | TData,
+): TData {
+  if (!response || typeof response !== "object" || !("data" in response)) {
+    return response as TData;
+  }
+  return ((response as OperationEnvelope<TData>).data ?? response) as TData;
+}
+
+async function runOperation<TArgs, TData>(
+  runner: OperationRunner<TArgs, TData>,
+  args: TArgs,
+): Promise<TData> {
+  let response: OperationEnvelope<TData> | TData;
+
+  try {
+    response = await runner(args);
+  } catch {
+    response = await runner({ input: args });
+  }
+
+  const errors = getOperationErrors(response);
+  if (errors?.length) {
+    throw new Error(formatErrors(errors));
+  }
+
+  return getOperationData(response);
+}
+
+function isEnrollmentActiveOnDate(
+  enrollment: EnrollmentRow,
+  targetDate: string,
+): boolean {
+  if (s(enrollment.status).toUpperCase() !== "ACTIVE") return false;
+  if (s(enrollment.startDate) && s(enrollment.startDate) > targetDate) {
+    return false;
+  }
+  if (s(enrollment.endDate) && s(enrollment.endDate) < targetDate) {
+    return false;
+  }
+  return true;
+}
+
+function choosePrimaryContact(
+  contacts: GuardianContactRow[],
+): GuardianContactRow | null {
+  const available = contacts
+    .filter((row) => s(row.status).toUpperCase() === "ACTIVE")
+    .filter((row) => row.receiveParentNotebook !== false)
+    .sort((left, right) => {
+      const primaryDiff = Number(right.isPrimary === true) - Number(left.isPrimary === true);
+      if (primaryDiff !== 0) return primaryDiff;
+      return s(left.id).localeCompare(s(right.id));
+    });
+
+  return available[0] ?? null;
+}
+
+function sheetIdFor(
+  tenantId: string,
+  classroomId: string,
+  targetDate: string,
+): string {
+  return `parent-notebook-sheet-${tenantId}-${classroomId}-${targetDate}`;
+}
+
+function entryIdFor(sheetId: string, childId: string): string {
+  return `parent-notebook-entry-${sheetId}-${childId}`;
+}
+
+function primaryContactIdFor(childId: string): string {
+  return `child-guardian-contact-${childId}-primary`;
+}
+
+function deliveryStatusLabel(value?: string | null): string {
+  switch (s(value).toUpperCase()) {
+    case "NOT_SENT":
+      return "未送信";
+    case "PENDING":
+      return "送信中";
+    case "SENT":
+      return "送信済み";
+    case "FAILED":
+      return "送信失敗";
+    case "SKIPPED":
+      return "連絡先未登録";
+    default:
+      return "未発行";
+  }
+}
+
+function responseStatusLabel(value?: string | null): string {
+  switch (s(value).toUpperCase()) {
+    case "NOT_SUBMITTED":
+      return "未回答";
+    case "SUBMITTED":
+      return "回答あり";
+    case "CONFIRMED":
+      return "園確認済み";
+    default:
+      return "未回答";
+  }
+}
+
+function sheetStatusLabel(value?: string | null): string {
+  switch (s(value).toUpperCase()) {
+    case "DRAFT":
+      return "下書き";
+    case "ISSUED":
+      return "発行済み";
+    case "CLOSED":
+      return "締切済み";
+    case "ARCHIVED":
+      return "アーカイブ";
+    default:
+      return "未作成";
+  }
+}
+
+export default function ParentNotebookWorkspacePanel(props: {
+  userId: string;
+  userName?: string | null;
+  userRole?: string | null;
+  tenantId: string;
+  tenantName?: string | null;
+  fiscalYear: number;
+  currentClassroomId?: string | null;
+  allowedClassroomIds?: string[];
+  isSchoolScope?: boolean;
+}) {
+  const {
+    userId,
+    userName,
+    userRole,
+    tenantId,
+    tenantName,
+    fiscalYear,
+    currentClassroomId = null,
+    allowedClassroomIds = [],
+    isSchoolScope = false,
+  } = props;
+
+  const client = useMemo(
+    () =>
+      generateClient<Schema>({
+        authMode: "userPool",
+      }) as unknown as ParentNotebookClient,
+    [],
+  );
+
+  const [targetDate, setTargetDate] = useState(tomorrowYYYYMMDD);
+  const [classrooms, setClassrooms] = useState<ClassroomRow[]>([]);
+  const [selectedClassroomId, setSelectedClassroomId] = useState(
+    currentClassroomId ?? "",
+  );
+  const [workspaceRows, setWorkspaceRows] = useState<ChildWorkspaceRow[]>([]);
+  const [sheet, setSheet] = useState<ParentNotebookSheetRow | null>(null);
+  const [noticeDraft, setNoticeDraft] = useState("");
+  const [contactDrafts, setContactDrafts] = useState<
+    Record<string, ContactDraft>
+  >({});
+  const [message, setMessage] = useState("");
+  const [loadingClassrooms, setLoadingClassrooms] = useState(false);
+  const [loadingWorkspace, setLoadingWorkspace] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [issuing, setIssuing] = useState(false);
+  const [sendingEmails, setSendingEmails] = useState(false);
+  const [savingContactChildId, setSavingContactChildId] = useState("");
+
+  const currentSheetId = selectedClassroomId
+    ? sheetIdFor(tenantId, selectedClassroomId, targetDate)
+    : "";
+
+  const issuedEntryCount = workspaceRows.filter((row) => row.entry).length;
+  const contactCount = workspaceRows.filter((row) => row.contact).length;
+  const sentCount = workspaceRows.filter(
+    (row) => s(row.entry?.deliveryStatus).toUpperCase() === "SENT",
+  ).length;
+  const failedCount = workspaceRows.filter(
+    (row) => s(row.entry?.deliveryStatus).toUpperCase() === "FAILED",
+  ).length;
+  const repliedCount = workspaceRows.filter((row) =>
+    ["SUBMITTED", "CONFIRMED"].includes(
+      s(row.entry?.responseStatus).toUpperCase(),
+    ),
+  ).length;
+  const lockedEntryCount = workspaceRows.filter((row) => {
+    const deliveryStatus = s(row.entry?.deliveryStatus).toUpperCase();
+    const responseStatus = s(row.entry?.responseStatus).toUpperCase();
+    return (
+      deliveryStatus === "SENT" ||
+      responseStatus === "SUBMITTED" ||
+      responseStatus === "CONFIRMED"
+    );
+  }).length;
+
+  async function loadClassrooms() {
+    setLoadingClassrooms(true);
+    setMessage("");
+
+    try {
+      const result = await client.models.Classroom.list({
+        filter: {
+          tenantId: { eq: tenantId },
+        },
+        limit: 1000,
+      });
+
+      if (result.errors?.length) {
+        throw new Error(
+          formatErrors(result.errors, "クラスの取得に失敗しました。"),
+        );
+      }
+
+      const allowedSet = new Set(allowedClassroomIds.map(s).filter(Boolean));
+      const rows = (result.data ?? [])
+        .filter((row) => row.fiscalYear === fiscalYear)
+        .filter((row) => s(row.status).toUpperCase() === "ACTIVE")
+        .filter((row) =>
+          isSchoolScope || allowedSet.size === 0
+            ? true
+            : allowedSet.has(s(row.id)),
+        )
+        .sort((left, right) =>
+          `${s(left.ageLabel)}_${s(left.name)}`.localeCompare(
+            `${s(right.ageLabel)}_${s(right.name)}`,
+            "ja",
+          ),
+        );
+
+      setClassrooms(rows);
+
+      const preferredId = s(currentClassroomId);
+      const nextClassroomId = rows.some((row) => row.id === preferredId)
+        ? preferredId
+        : rows[0]?.id ?? "";
+
+      setSelectedClassroomId((current) =>
+        rows.some((row) => row.id === current) ? current : nextClassroomId,
+      );
+
+      if (rows.length === 0) {
+        setMessage("表示可能なクラスがありません。");
+      }
+    } catch (error) {
+      console.error(error);
+      setClassrooms([]);
+      setMessage(
+        `クラス読込エラー: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setLoadingClassrooms(false);
+    }
+  }
+
+  async function loadWorkspace() {
+    if (!selectedClassroomId) {
+      setMessage("対象クラスを選択してください。");
+      return;
+    }
+    if (!targetDate) {
+      setMessage("対象日を入力してください。");
+      return;
+    }
+
+    setLoadingWorkspace(true);
+    setMessage("");
+
+    try {
+      const sheetId = sheetIdFor(tenantId, selectedClassroomId, targetDate);
+
+      const [enrollmentRes, childRes, contactRes, sheetRes, entryRes] =
+        await Promise.all([
+          client.models.ChildClassroomEnrollment.list({
+            filter: {
+              tenantId: { eq: tenantId },
+              classroomId: { eq: selectedClassroomId },
+              fiscalYear: { eq: fiscalYear },
+            },
+            limit: 1000,
+          }),
+          client.models.Child.list({
+            filter: {
+              tenantId: { eq: tenantId },
+            },
+            limit: 1000,
+          }),
+          client.models.ChildGuardianContact.list({
+            filter: {
+              tenantId: { eq: tenantId },
+            },
+            limit: 1000,
+          }),
+          client.models.ParentNotebookSheet.get({ id: sheetId }),
+          client.models.ParentNotebookEntry.list({
+            filter: {
+              tenantId: { eq: tenantId },
+              parentNotebookSheetId: { eq: sheetId },
+            },
+            limit: 1000,
+          }),
+        ]);
+
+      const allErrors = [
+        ...(enrollmentRes.errors ?? []),
+        ...(childRes.errors ?? []),
+        ...(contactRes.errors ?? []),
+        ...(entryRes.errors ?? []),
+      ];
+
+      if (allErrors.length > 0) {
+        throw new Error(
+          formatErrors(allErrors, "連絡帳ワークスペースの取得に失敗しました。"),
+        );
+      }
+
+      const enrollments = (enrollmentRes.data ?? [])
+        .filter((row) => isEnrollmentActiveOnDate(row, targetDate))
+        .sort((left, right) => s(left.childId).localeCompare(s(right.childId)));
+
+      const childById = new Map(
+        (childRes.data ?? [])
+          .filter((row) => s(row.status).toUpperCase() === "ACTIVE")
+          .map((row) => [s(row.id), row]),
+      );
+
+      const contactsByChildId = new Map<string, GuardianContactRow[]>();
+      for (const contact of contactRes.data ?? []) {
+        const childId = s(contact.childId);
+        if (!childId) continue;
+        const bucket = contactsByChildId.get(childId) ?? [];
+        bucket.push(contact);
+        contactsByChildId.set(childId, bucket);
+      }
+
+      const entryByChildId = new Map(
+        (entryRes.data ?? []).map((row) => [s(row.childId), row]),
+      );
+
+      const rows: ChildWorkspaceRow[] = enrollments
+        .map((enrollment) => {
+          const child = childById.get(s(enrollment.childId));
+          if (!child) return null;
+          return {
+            child,
+            enrollment,
+            contact: choosePrimaryContact(
+              contactsByChildId.get(s(child.id)) ?? [],
+            ),
+            entry: entryByChildId.get(s(child.id)) ?? null,
+          };
+        })
+        .filter((row): row is ChildWorkspaceRow => row !== null)
+        .sort((left, right) =>
+          s(left.child.displayName).localeCompare(
+            s(right.child.displayName),
+            "ja",
+          ),
+        );
+
+      const drafts: Record<string, ContactDraft> = {};
+      for (const row of rows) {
+        const childId = s(row.child.id);
+        drafts[childId] = {
+          contactId: s(row.contact?.id),
+          relation: s(row.contact?.relation) || DEFAULT_RELATION,
+          guardianName: s(row.contact?.guardianName),
+          email: s(row.contact?.email),
+        };
+      }
+
+      setWorkspaceRows(rows);
+      setContactDrafts(drafts);
+      setSheet(sheetRes.data ?? null);
+      setNoticeDraft(
+        s(sheetRes.data?.noticeDraftText) || s(sheetRes.data?.noticeText),
+      );
+
+      setMessage(
+        `連絡帳を読み込みました。対象児童=${rows.length}名、連絡先登録=${
+          rows.filter((row) => row.contact).length
+        }名、発行済み=${rows.filter((row) => row.entry).length}名`,
+      );
+    } catch (error) {
+      console.error(error);
+      setWorkspaceRows([]);
+      setContactDrafts({});
+      setSheet(null);
+      setNoticeDraft("");
+      setMessage(
+        `連絡帳読込エラー: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setLoadingWorkspace(false);
+    }
+  }
+
+  async function saveNoticeDraft() {
+    if (!selectedClassroomId || !targetDate) {
+      setMessage("対象日と対象クラスを指定してください。");
+      return;
+    }
+
+    setSavingDraft(true);
+    setMessage("");
+
+    try {
+      const now = new Date().toISOString();
+      const sheetId = sheetIdFor(tenantId, selectedClassroomId, targetDate);
+      const input = {
+        id: sheetId,
+        tenantId,
+        fiscalYear,
+        classroomId: selectedClassroomId,
+        targetDate,
+        status: sheet?.status || "DRAFT",
+        noticeDraftText: noticeDraft.trim() || null,
+        updatedByUserId: userId,
+      };
+
+      const result = sheet
+        ? await client.models.ParentNotebookSheet.update(input)
+        : await client.models.ParentNotebookSheet.create({
+            ...input,
+            createdByUserId: userId,
+          });
+
+      if (!result.data) {
+        throw new Error(
+          formatErrors(result.errors, "連絡帳の下書き保存に失敗しました。"),
+        );
+      }
+
+      setSheet(result.data);
+      setMessage(`園からの連絡を下書き保存しました。更新=${formatDateTime(now)}`);
+    } catch (error) {
+      console.error(error);
+      setMessage(
+        `下書き保存エラー: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  async function saveGuardianContact(childId: string) {
+    const draft = contactDrafts[childId];
+    if (!draft) return;
+
+    if (!s(draft.relation) || !s(draft.guardianName) || !s(draft.email)) {
+      setMessage("続柄・保護者氏名・メールアドレスをすべて入力してください。");
+      return;
+    }
+
+    setSavingContactChildId(childId);
+    setMessage("");
+
+    try {
+      const existing = workspaceRows.find(
+        (row) => s(row.child.id) === childId,
+      )?.contact;
+      const contactId = s(existing?.id) || primaryContactIdFor(childId);
+      const input = {
+        id: contactId,
+        tenantId,
+        childId,
+        relation: s(draft.relation),
+        guardianName: s(draft.guardianName),
+        email: s(draft.email),
+        isPrimary: true,
+        receiveParentNotebook: true,
+        status: "ACTIVE",
+        updatedByUserId: userId,
+      };
+
+      const result = existing
+        ? await client.models.ChildGuardianContact.update(input)
+        : await client.models.ChildGuardianContact.create({
+            ...input,
+            createdByUserId: userId,
+          });
+
+      if (!result.data) {
+        throw new Error(
+          formatErrors(result.errors, "保護者連絡先の保存に失敗しました。"),
+        );
+      }
+
+      setWorkspaceRows((previous) =>
+        previous.map((row) =>
+          s(row.child.id) === childId
+            ? {
+                ...row,
+                contact: result.data ?? row.contact,
+              }
+            : row,
+        ),
+      );
+      setContactDrafts((previous) => ({
+        ...previous,
+        [childId]: {
+          ...previous[childId],
+          contactId: contactId,
+        },
+      }));
+      setMessage("保護者連絡先を保存しました。");
+    } catch (error) {
+      console.error(error);
+      setMessage(
+        `連絡先保存エラー: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setSavingContactChildId("");
+    }
+  }
+
+  async function issueParentNotebooks() {
+    if (!selectedClassroomId || !targetDate) {
+      setMessage("対象日と対象クラスを指定してください。");
+      return;
+    }
+    if (workspaceRows.length === 0) {
+      setMessage("発行対象の在籍児童がいません。");
+      return;
+    }
+    if (!noticeDraft.trim()) {
+      setMessage("園からの連絡を入力してください。");
+      return;
+    }
+    if (["CLOSED", "ARCHIVED"].includes(s(sheet?.status).toUpperCase())) {
+      setMessage("締切済みまたはアーカイブ済みの連絡帳は発行できません。");
+      return;
+    }
+
+    const issuedText = s(sheet?.noticeText);
+    const noticeChanged = Boolean(issuedText) && issuedText !== noticeDraft.trim();
+    if (lockedEntryCount > 0 && noticeChanged) {
+      setMessage(
+        "送信済みまたは回答済みの児童がいるため、発行済み本文は変更できません。",
+      );
+      return;
+    }
+
+    setIssuing(true);
+    setMessage("");
+
+    try {
+      const now = new Date().toISOString();
+      const sheetId = sheetIdFor(tenantId, selectedClassroomId, targetDate);
+      const sheetInput = {
+        id: sheetId,
+        tenantId,
+        fiscalYear,
+        classroomId: selectedClassroomId,
+        targetDate,
+        status: "ISSUED",
+        noticeDraftText: noticeDraft.trim(),
+        noticeText: noticeDraft.trim(),
+        issuedAt: sheet?.issuedAt || now,
+        issuedByUserId: sheet?.issuedByUserId || userId,
+        issuedByName: sheet?.issuedByName || s(userName) || userId,
+        updatedByUserId: userId,
+      };
+
+      const sheetResult = sheet
+        ? await client.models.ParentNotebookSheet.update(sheetInput)
+        : await client.models.ParentNotebookSheet.create({
+            ...sheetInput,
+            createdByUserId: userId,
+          });
+
+      if (!sheetResult.data) {
+        throw new Error(
+          formatErrors(sheetResult.errors, "連絡帳Sheetの発行に失敗しました。"),
+        );
+      }
+
+      let createdCount = 0;
+      let updatedCount = 0;
+      let skippedCount = 0;
+
+      for (let index = 0; index < workspaceRows.length; index += 1) {
+        const row = workspaceRows[index];
+        const childId = s(row.child.id);
+        const contact = row.contact;
+        const hasContact = Boolean(contact && s(contact.email));
+        const existingEntry = row.entry;
+        const existingDeliveryStatus = s(
+          existingEntry?.deliveryStatus,
+        ).toUpperCase();
+        const deliveryStatus = existingEntry
+          ? existingDeliveryStatus === "SKIPPED" && hasContact
+            ? "NOT_SENT"
+            : !hasContact && existingDeliveryStatus !== "SENT"
+              ? "SKIPPED"
+              : existingDeliveryStatus || (hasContact ? "NOT_SENT" : "SKIPPED")
+          : hasContact
+            ? "NOT_SENT"
+            : "SKIPPED";
+
+        const entryInput = {
+          id: entryIdFor(sheetId, childId),
+          tenantId,
+          fiscalYear,
+          parentNotebookSheetId: sheetId,
+          classroomId: selectedClassroomId,
+          childId,
+          childName: s(row.child.displayName),
+          targetDate,
+          sortOrder: index + 1,
+          guardianContactId: contact?.id ?? null,
+          guardianRelationSnapshot: contact?.relation ?? null,
+          guardianNameSnapshot: contact?.guardianName ?? null,
+          guardianEmailSnapshot: contact?.email ?? null,
+          deliveryStatus,
+          responseStatus: existingEntry?.responseStatus || "NOT_SUBMITTED",
+          responseRevision: existingEntry?.responseRevision ?? 0,
+          updatedByUserId: userId,
+        };
+
+        const entryResult = existingEntry
+          ? await client.models.ParentNotebookEntry.update(entryInput)
+          : await client.models.ParentNotebookEntry.create({
+              ...entryInput,
+              createdByUserId: userId,
+            });
+
+        if (!entryResult.data) {
+          throw new Error(
+            formatErrors(
+              entryResult.errors,
+              `${s(row.child.displayName)}さんのEntry発行に失敗しました。`,
+            ),
+          );
+        }
+
+        if (existingEntry) updatedCount += 1;
+        else createdCount += 1;
+        if (!hasContact) skippedCount += 1;
+      }
+
+      setSheet(sheetResult.data);
+      await loadWorkspace();
+      setMessage(
+        `連絡帳を発行しました。新規=${createdCount}名、更新=${updatedCount}名、連絡先未登録=${skippedCount}名`,
+      );
+    } catch (error) {
+      console.error(error);
+      setMessage(
+        `連絡帳発行エラー: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setIssuing(false);
+    }
+  }
+
+  async function sendParentNotebookEmails() {
+    const runner = client.mutations?.sendParentNotebookEmails;
+
+    if (!runner) {
+      setMessage(
+        "sendParentNotebookEmails mutationが見つかりません。resource.tsとSandboxを確認してください。",
+      );
+      return;
+    }
+
+    if (!sheet || s(sheet.status).toUpperCase() !== "ISSUED") {
+      setMessage("先に児童別連絡帳を発行してください。");
+      return;
+    }
+
+    const sendableCount = workspaceRows.filter((row) => {
+      const status = s(row.entry?.deliveryStatus).toUpperCase();
+      const hasEmail = Boolean(s(row.entry?.guardianEmailSnapshot));
+      return Boolean(
+        row.entry &&
+          hasEmail &&
+          ["NOT_SENT", "FAILED", "SKIPPED"].includes(status),
+      );
+    }).length;
+
+    if (sendableCount === 0) {
+      setMessage("メール送信対象の未送信または送信失敗児童がいません。");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `未送信または送信失敗の${sendableCount}名へ、児童別回答URL付きメールを送信します。よろしいですか？`,
+    );
+    if (!confirmed) return;
+
+    setSendingEmails(true);
+    setMessage("");
+
+    try {
+      const data = await runOperation<
+        SendParentNotebookEmailsArgs,
+        SendParentNotebookEmailsResult
+      >(runner, {
+        parentNotebookSheetId: sheet.id,
+        baseUrl:
+          typeof window === "undefined" ? undefined : window.location.origin,
+      });
+
+      await loadWorkspace();
+
+      const details = (data.results ?? [])
+        .filter(
+          (row): row is ParentNotebookEmailSendResult =>
+            Boolean(row) && !["SENT", "SKIPPED_ALREADY_SENT"].includes(
+              s(row?.status).toUpperCase(),
+            ),
+        )
+        .map((row) => {
+          const child = s(row.childName) || s(row.childId) || "-";
+          return `- ${child}: ${s(row.status) || "-"}${
+            s(row.message) ? ` / ${s(row.message)}` : ""
+          }`;
+        })
+        .join("\n");
+
+      setMessage(
+        `${data.message || "保護者連絡帳メールを送信しました。"}${
+          details ? `\n${details}` : ""
+        }`,
+      );
+    } catch (error) {
+      console.error(error);
+      setMessage(
+        `メール送信エラー: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setSendingEmails(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadClassrooms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, fiscalYear]);
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <section
+        style={{
+          padding: 16,
+          border: "1px solid #d0d7de",
+          borderRadius: 10,
+          background: "#fff",
+          display: "grid",
+          gap: 12,
+        }}
+      >
+        <div>
+          <h2 style={{ margin: 0 }}>保護者連絡帳</h2>
+          <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
+            対象日の在籍児童を読み込み、園からの連絡を保存して児童別連絡帳を発行します。
+            Phase 11-Cでは児童別URL付きメール送信と、保護者回答画面まで接続します。
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            flexWrap: "wrap",
+            alignItems: "end",
+          }}
+        >
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontWeight: 700 }}>対象日</span>
+            <input
+              type="date"
+              value={targetDate}
+              onChange={(event) => setTargetDate(event.target.value)}
+              disabled={loadingWorkspace || issuing || sendingEmails}
+            />
+          </label>
+
+          <label style={{ display: "grid", gap: 4, minWidth: 220 }}>
+            <span style={{ fontWeight: 700 }}>対象クラス</span>
+            <select
+              value={selectedClassroomId}
+              onChange={(event) => setSelectedClassroomId(event.target.value)}
+              disabled={loadingClassrooms || loadingWorkspace || issuing || sendingEmails}
+            >
+              <option value="">選択してください</option>
+              {classrooms.map((classroom) => (
+                <option key={classroom.id} value={classroom.id}>
+                  {classroom.name}
+                  {classroom.ageLabel ? `（${classroom.ageLabel}）` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <button
+            type="button"
+            onClick={loadWorkspace}
+            disabled={loadingWorkspace || sendingEmails || !selectedClassroomId}
+          >
+            {loadingWorkspace ? "読込中..." : "連絡帳を読み込む"}
+          </button>
+        </div>
+
+        <div style={{ fontSize: 13, color: "#555" }}>
+          園: <b>{tenantName || tenantId}</b> / 年度: <b>{fiscalYear}</b> / 操作者: {" "}
+          <b>{userName || userId}</b>（{userRole || "-"}）
+        </div>
+
+        {message ? (
+          <pre
+            style={{
+              margin: 0,
+              padding: 12,
+              whiteSpace: "pre-wrap",
+              border: "1px solid #dbeafe",
+              background: "#f6fbff",
+              borderRadius: 8,
+            }}
+          >
+            {message}
+          </pre>
+        ) : null}
+      </section>
+
+      <section
+        style={{
+          padding: 16,
+          border: "1px solid #d0d7de",
+          borderRadius: 10,
+          background: "#fff",
+          display: "grid",
+          gap: 12,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
+          <h3 style={{ margin: 0 }}>園からの連絡</h3>
+          <span style={{ color: "#555", fontSize: 13 }}>
+            状態: <b>{sheetStatusLabel(sheet?.status)}</b>
+          </span>
+          <span style={{ color: "#555", fontSize: 13 }}>
+            Sheet ID: <code>{currentSheetId || "-"}</code>
+          </span>
+        </div>
+
+        <textarea
+          value={noticeDraft}
+          onChange={(event) => setNoticeDraft(event.target.value)}
+          placeholder="例：明日は水遊びを予定しています。水着、タオル、着替えをご用意ください。"
+          disabled={savingDraft || issuing || sendingEmails}
+          style={{
+            width: "100%",
+            minHeight: 140,
+            boxSizing: "border-box",
+            resize: "vertical",
+          }}
+        />
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={saveNoticeDraft}
+            disabled={savingDraft || issuing || sendingEmails || !selectedClassroomId}
+          >
+            {savingDraft ? "保存中..." : "下書き保存"}
+          </button>
+          <button
+            type="button"
+            onClick={issueParentNotebooks}
+            disabled={
+              issuing ||
+              savingDraft ||
+              sendingEmails ||
+              workspaceRows.length === 0 ||
+              !noticeDraft.trim()
+            }
+          >
+            {issuing
+              ? "発行中..."
+              : sheet
+                ? "児童別連絡帳を更新発行"
+                : "児童別連絡帳を発行"}
+          </button>
+          <button
+            type="button"
+            onClick={sendParentNotebookEmails}
+            disabled={
+              sendingEmails ||
+              issuing ||
+              !sheet ||
+              s(sheet.status).toUpperCase() !== "ISSUED" ||
+              issuedEntryCount === 0
+            }
+          >
+            {sendingEmails ? "メール送信中..." : "未送信へメール送信"}
+          </button>
+        </div>
+
+        {lockedEntryCount > 0 ? (
+          <div style={{ color: "#92400e", fontSize: 13 }}>
+            送信済みまたは回答済みが{lockedEntryCount}名います。発行済み本文を変更した再発行はできません。
+          </div>
+        ) : null}
+      </section>
+
+      <section
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {[
+          ["対象児童", workspaceRows.length],
+          ["連絡先登録", contactCount],
+          ["Entry発行済み", issuedEntryCount],
+          ["メール送信済み", sentCount],
+          ["メール送信失敗", failedCount],
+          ["保護者回答あり", repliedCount],
+        ].map(([label, value]) => (
+          <div
+            key={String(label)}
+            style={{
+              padding: 12,
+              border: "1px solid #d0d7de",
+              borderRadius: 8,
+              background: "#f8fafc",
+            }}
+          >
+            <div style={{ color: "#555", fontSize: 12 }}>{label}</div>
+            <div style={{ fontWeight: 800, fontSize: 24 }}>{value}</div>
+          </div>
+        ))}
+      </section>
+
+      <section
+        style={{
+          padding: 16,
+          border: "1px solid #d0d7de",
+          borderRadius: 10,
+          background: "#fff",
+          display: "grid",
+          gap: 12,
+        }}
+      >
+        <div>
+          <h3 style={{ margin: 0 }}>児童別連絡帳・主連絡先</h3>
+          <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
+            メール送信対象となる主連絡先を児童ごとに登録します。未登録の児童は発行時に「連絡先未登録」となります。
+          </div>
+        </div>
+
+        {workspaceRows.length === 0 ? (
+          <div style={{ color: "#666" }}>
+            対象日とクラスを選択して「連絡帳を読み込む」を押してください。
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                minWidth: 1630,
+                borderCollapse: "collapse",
+              }}
+            >
+              <thead>
+                <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
+                  <th style={{ padding: 8 }}>児童</th>
+                  <th style={{ padding: 8 }}>続柄</th>
+                  <th style={{ padding: 8 }}>保護者氏名</th>
+                  <th style={{ padding: 8 }}>メールアドレス</th>
+                  <th style={{ padding: 8 }}>連絡先操作</th>
+                  <th style={{ padding: 8 }}>発行</th>
+                  <th style={{ padding: 8 }}>送信</th>
+                  <th style={{ padding: 8 }}>送信日時・結果</th>
+                  <th style={{ padding: 8 }}>回答</th>
+                  <th style={{ padding: 8 }}>回答日時</th>
+                </tr>
+              </thead>
+              <tbody>
+                {workspaceRows.map((row) => {
+                  const childId = s(row.child.id);
+                  const draft = contactDrafts[childId] ?? {
+                    contactId: "",
+                    relation: DEFAULT_RELATION,
+                    guardianName: "",
+                    email: "",
+                  };
+                  const savingContact = savingContactChildId === childId;
+
+                  return (
+                    <tr key={childId}>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 150,
+                        }}
+                      >
+                        <div style={{ fontWeight: 700 }}>
+                          {row.child.displayName}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#666" }}>
+                          {row.child.kana || childId}
+                        </div>
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 100,
+                        }}
+                      >
+                        <select
+                          value={draft.relation}
+                          onChange={(event) =>
+                            setContactDrafts((previous) => ({
+                              ...previous,
+                              [childId]: {
+                                ...draft,
+                                relation: event.target.value,
+                              },
+                            }))
+                          }
+                          disabled={savingContact}
+                        >
+                          <option value="母">母</option>
+                          <option value="父">父</option>
+                          <option value="祖母">祖母</option>
+                          <option value="祖父">祖父</option>
+                          <option value="その他">その他</option>
+                        </select>
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 180,
+                        }}
+                      >
+                        <input
+                          value={draft.guardianName}
+                          onChange={(event) =>
+                            setContactDrafts((previous) => ({
+                              ...previous,
+                              [childId]: {
+                                ...draft,
+                                guardianName: event.target.value,
+                              },
+                            }))
+                          }
+                          placeholder="例：山田 花子"
+                          disabled={savingContact}
+                          style={{ width: "100%", boxSizing: "border-box" }}
+                        />
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 260,
+                        }}
+                      >
+                        <input
+                          type="email"
+                          value={draft.email}
+                          onChange={(event) =>
+                            setContactDrafts((previous) => ({
+                              ...previous,
+                              [childId]: {
+                                ...draft,
+                                email: event.target.value,
+                              },
+                            }))
+                          }
+                          placeholder="parent@example.jp"
+                          disabled={savingContact}
+                          style={{ width: "100%", boxSizing: "border-box" }}
+                        />
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 120,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => saveGuardianContact(childId)}
+                          disabled={savingContact}
+                        >
+                          {savingContact
+                            ? "保存中..."
+                            : row.contact
+                              ? "連絡先更新"
+                              : "連絡先登録"}
+                        </button>
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 90,
+                        }}
+                      >
+                        {row.entry ? "発行済み" : "未発行"}
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 120,
+                        }}
+                      >
+                        {deliveryStatusLabel(row.entry?.deliveryStatus)}
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 250,
+                          fontSize: 12,
+                        }}
+                      >
+                        <div>{formatDateTime(row.entry?.sentAt)}</div>
+                        {row.entry?.sendErrorMessage ? (
+                          <div
+                            style={{
+                              marginTop: 4,
+                              color: "#b91c1c",
+                              whiteSpace: "pre-wrap",
+                            }}
+                          >
+                            {row.entry.sendErrorMessage}
+                          </div>
+                        ) : row.entry?.emailMessageId ? (
+                          <div
+                            style={{
+                              marginTop: 4,
+                              color: "#64748b",
+                              wordBreak: "break-all",
+                            }}
+                          >
+                            SES: {row.entry.emailMessageId}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 110,
+                        }}
+                      >
+                        {responseStatusLabel(row.entry?.responseStatus)}
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 170,
+                        }}
+                      >
+                        {formatDateTime(row.entry?.submittedAt)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}

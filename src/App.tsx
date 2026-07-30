@@ -23,6 +23,8 @@ import PracticeSearchPanel from "./features/practice/PracticeSearchPanel";
 import PlanWorkspacePanel from "./features/plan/PlanWorkspacePanel";
 import DoWorkspacePanel from "./features/do/DoWorkspacePanel";
 import AttendanceWorkspacePanel from "./features/attendance/AttendanceWorkspacePanel";
+import ParentNotebookWorkspacePanel from "./features/parent-notebook/ParentNotebookWorkspacePanel";
+import ParentNotebookReplyForm from "./features/parent-reply/ParentNotebookReplyForm";
 import CheckWorkspacePanel from "./features/check/CheckWorkspacePanel";
 import ChildWeeklyWorkspacePanel from "./features/check/ChildWeeklyWorkspacePanel";
 import ChildProgressRecordPanel from "./features/check/ChildProgressRecordPanel";
@@ -34,6 +36,17 @@ const rawClient = generateClient<Schema>({
 
 const CURRENT_FISCAL_YEAR = 2026;
 const MAIN_USER_POOL_ID = "ap-northeast-1_5ac387mHz";
+
+function isParentNotebookReplyRoute(): boolean {
+  if (typeof window === "undefined") return false;
+
+  const path = window.location.pathname.replace(/\/+$/, "");
+  const params = new URLSearchParams(window.location.search);
+
+  return (
+    path.endsWith("/parent-notebook/reply") && Boolean(params.get("token"))
+  );
+}
 
 type ModelGetResult<T> = Promise<{
   data: T | null;
@@ -407,6 +420,7 @@ type TabKey =
   | "home"
   | "doWorkspace"
   | "attendance"
+  | "parentNotebook"
   | "checkWorkspace"
   | "childWeekly"
   | "childProgress"
@@ -1440,6 +1454,14 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
 
           <button
             type="button"
+            onClick={() => setTab("parentNotebook")}
+            disabled={!context?.tenantId || tab === "parentNotebook"}
+          >
+            保護者連絡帳
+          </button>
+
+          <button
+            type="button"
             onClick={() => setTab("checkWorkspace")}
             disabled={!context?.tenantId || tab === "checkWorkspace"}
           >
@@ -1517,6 +1539,22 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
             owner={practiceOwner}
             ownerName={context.displayName}
             ownerRole={context.role}
+            tenantId={practiceTenantId}
+            tenantName={context.tenantName}
+            fiscalYear={CURRENT_FISCAL_YEAR}
+            currentClassroomId={currentClassroomId}
+            allowedClassroomIds={context.classroomIds}
+            isSchoolScope={isSchoolScope}
+          />
+        </section>
+      )}
+
+      {tab === "parentNotebook" && context?.tenantId && (
+        <section className="panel">
+          <ParentNotebookWorkspacePanel
+            userId={practiceOwner}
+            userName={context.displayName}
+            userRole={context.role}
             tenantId={practiceTenantId}
             tenantName={context.tenantName}
             fiscalYear={CURRENT_FISCAL_YEAR}
@@ -1717,6 +1755,10 @@ function SignedInHome({ signOut }: { signOut?: () => void }) {
 }
 
 export default function App() {
+  if (isParentNotebookReplyRoute()) {
+    return <ParentNotebookReplyForm />;
+  }
+
   return (
     <Authenticator>
       {({ signOut }) => <SignedInHome signOut={signOut} />}
