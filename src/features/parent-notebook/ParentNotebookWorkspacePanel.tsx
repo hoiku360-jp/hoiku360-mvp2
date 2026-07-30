@@ -95,6 +95,8 @@ type ChildWorkspaceRow = {
   entry: ParentNotebookEntryRow | null;
 };
 
+type ResponseFilter = "ALL" | "NOT_SUBMITTED" | "SUBMITTED" | "CONFIRMED";
+
 const DEFAULT_RELATION = "母";
 
 function s(value: unknown): string {
@@ -243,6 +245,36 @@ function responseStatusLabel(value?: string | null): string {
   }
 }
 
+function attendancePlanTypeLabel(value?: string | null): string {
+  switch (s(value).toUpperCase()) {
+    case "NORMAL":
+      return "通常登園";
+    case "ABSENT":
+      return "欠席";
+    case "LATE":
+      return "遅刻";
+    case "EARLY_DEPARTURE":
+      return "早退";
+    case "OTHER":
+      return "その他";
+    default:
+      return "未回答";
+  }
+}
+
+function responseFilterLabel(value: ResponseFilter): string {
+  switch (value) {
+    case "NOT_SUBMITTED":
+      return "未回答";
+    case "SUBMITTED":
+      return "回答あり";
+    case "CONFIRMED":
+      return "園確認済み";
+    default:
+      return "すべて";
+  }
+}
+
 function sheetStatusLabel(value?: string | null): string {
   switch (s(value).toUpperCase()) {
     case "DRAFT":
@@ -307,6 +339,8 @@ export default function ParentNotebookWorkspacePanel(props: {
   const [issuing, setIssuing] = useState(false);
   const [sendingEmails, setSendingEmails] = useState(false);
   const [savingContactChildId, setSavingContactChildId] = useState("");
+  const [responseFilter, setResponseFilter] = useState<ResponseFilter>("ALL");
+  const [updatingResponseEntryId, setUpdatingResponseEntryId] = useState("");
 
   const currentSheetId = selectedClassroomId
     ? sheetIdFor(tenantId, selectedClassroomId, targetDate)
@@ -320,11 +354,33 @@ export default function ParentNotebookWorkspacePanel(props: {
   const failedCount = workspaceRows.filter(
     (row) => s(row.entry?.deliveryStatus).toUpperCase() === "FAILED",
   ).length;
-  const repliedCount = workspaceRows.filter((row) =>
-    ["SUBMITTED", "CONFIRMED"].includes(
-      s(row.entry?.responseStatus).toUpperCase(),
-    ),
+  const notIssuedCount = workspaceRows.filter((row) => !row.entry).length;
+  const unansweredCount = workspaceRows.filter(
+    (row) =>
+      row.entry &&
+      s(row.entry.responseStatus).toUpperCase() === "NOT_SUBMITTED",
   ).length;
+  const submittedCount = workspaceRows.filter(
+    (row) => s(row.entry?.responseStatus).toUpperCase() === "SUBMITTED",
+  ).length;
+  const confirmedCount = workspaceRows.filter(
+    (row) => s(row.entry?.responseStatus).toUpperCase() === "CONFIRMED",
+  ).length;
+  const responseRows = workspaceRows.filter(
+    (row): row is ChildWorkspaceRow & { entry: ParentNotebookEntryRow } =>
+      row.entry !== null,
+  );
+  const filteredResponseRows = responseRows.filter((row) => {
+    if (responseFilter === "ALL") return true;
+    return s(row.entry.responseStatus).toUpperCase() === responseFilter;
+  });
+  const unansweredChildNames = responseRows
+    .filter(
+      (row) =>
+        s(row.entry.responseStatus).toUpperCase() === "NOT_SUBMITTED",
+    )
+    .map((row) => s(row.child.displayName))
+    .filter(Boolean);
   const lockedEntryCount = workspaceRows.filter((row) => {
     const deliveryStatus = s(row.entry?.deliveryStatus).toUpperCase();
     const responseStatus = s(row.entry?.responseStatus).toUpperCase();
@@ -805,6 +861,78 @@ export default function ParentNotebookWorkspacePanel(props: {
     }
   }
 
+  async function updateResponseConfirmation(
+    entry: ParentNotebookEntryRow,
+    nextStatus: "SUBMITTED" | "CONFIRMED",
+  ) {
+    const entryId = s(entry.id);
+    if (!entryId) return;
+
+    const currentStatus = s(entry.responseStatus).toUpperCase();
+    if (nextStatus === "CONFIRMED" && currentStatus !== "SUBMITTED") {
+      setMessage("回答ありの連絡帳だけを園確認済みにできます。");
+      return;
+    }
+    if (nextStatus === "SUBMITTED" && currentStatus !== "CONFIRMED") {
+      setMessage("園確認済みの連絡帳だけ確認を取り消せます。");
+      return;
+    }
+
+    const actionLabel =
+      nextStatus === "CONFIRMED" ? "園確認済みにする" : "園確認を取り消す";
+    const confirmed = window.confirm(
+      `${s(entry.childName) || "選択した児童"}さんの回答を「${actionLabel}」で更新します。よろしいですか？`,
+    );
+    if (!confirmed) return;
+
+    setUpdatingResponseEntryId(entryId);
+    setMessage("");
+
+    try {
+      const now = new Date().toISOString();
+      const result = await client.models.ParentNotebookEntry.update({
+        id: entryId,
+        responseStatus: nextStatus,
+        confirmedAt: nextStatus === "CONFIRMED" ? now : null,
+        confirmedByUserId: nextStatus === "CONFIRMED" ? userId : null,
+        confirmedByName:
+          nextStatus === "CONFIRMED" ? s(userName) || userId : null,
+        updatedByUserId: userId,
+      });
+
+      if (!result.data) {
+        throw new Error(
+          formatErrors(result.errors, "保護者回答の確認状態更新に失敗しました。"),
+        );
+      }
+
+      setWorkspaceRows((previous) =>
+        previous.map((row) =>
+          s(row.entry?.id) === entryId
+            ? {
+                ...row,
+                entry: result.data ?? row.entry,
+              }
+            : row,
+        ),
+      );
+      setMessage(
+        nextStatus === "CONFIRMED"
+          ? `${s(entry.childName)}さんの回答を園確認済みにしました。`
+          : `${s(entry.childName)}さんの園確認を取り消し、回答ありへ戻しました。`,
+      );
+    } catch (error) {
+      console.error(error);
+      setMessage(
+        `回答確認更新エラー: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setUpdatingResponseEntryId("");
+    }
+  }
+
   async function sendParentNotebookEmails() {
     const runner = client.mutations?.sendParentNotebookEmails;
 
@@ -908,7 +1036,7 @@ export default function ParentNotebookWorkspacePanel(props: {
           <h2 style={{ margin: 0 }}>保護者連絡帳</h2>
           <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
             対象日の在籍児童を読み込み、園からの連絡を保存して児童別連絡帳を発行します。
-            Phase 11-Cでは児童別URL付きメール送信と、保護者回答画面まで接続します。
+            Phase 11-Dでは、保護者回答の内容確認、未回答一覧、園確認済み処理を行います。
           </div>
         </div>
 
@@ -1073,11 +1201,14 @@ export default function ParentNotebookWorkspacePanel(props: {
       >
         {[
           ["対象児童", workspaceRows.length],
-          ["連絡先登録", contactCount],
           ["Entry発行済み", issuedEntryCount],
+          ["未発行", notIssuedCount],
+          ["未回答", unansweredCount],
+          ["回答あり", submittedCount],
+          ["園確認済み", confirmedCount],
           ["メール送信済み", sentCount],
           ["メール送信失敗", failedCount],
-          ["保護者回答あり", repliedCount],
+          ["連絡先登録", contactCount],
         ].map(([label, value]) => (
           <div
             key={String(label)}
@@ -1094,6 +1225,7 @@ export default function ParentNotebookWorkspacePanel(props: {
         ))}
       </section>
 
+
       <section
         style={{
           padding: 16,
@@ -1105,9 +1237,278 @@ export default function ParentNotebookWorkspacePanel(props: {
         }}
       >
         <div>
-          <h3 style={{ margin: 0 }}>児童別連絡帳・主連絡先</h3>
+          <h3 style={{ margin: 0 }}>保護者回答確認</h3>
           <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
-            メール送信対象となる主連絡先を児童ごとに登録します。未登録の児童は発行時に「連絡先未登録」となります。
+            保護者が入力した登降園予定、お迎え予定、家庭での様子を確認し、確認後に園確認済みへ更新します。
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
+          {(["ALL", "NOT_SUBMITTED", "SUBMITTED", "CONFIRMED"] as ResponseFilter[]).map(
+            (filter) => {
+              const count =
+                filter === "ALL"
+                  ? responseRows.length
+                  : responseRows.filter(
+                      (row) =>
+                        s(row.entry.responseStatus).toUpperCase() === filter,
+                    ).length;
+              const selected = responseFilter === filter;
+
+              return (
+                <button
+                  key={filter}
+                  type="button"
+                  onClick={() => setResponseFilter(filter)}
+                  style={{
+                    border: selected ? "2px solid #2563eb" : "1px solid #cbd5e1",
+                    background: selected ? "#eff6ff" : "#fff",
+                    borderRadius: 999,
+                    padding: "7px 12px",
+                    fontWeight: selected ? 800 : 600,
+                  }}
+                >
+                  {responseFilterLabel(filter)}（{count}）
+                </button>
+              );
+            },
+          )}
+        </div>
+
+        <div
+          style={{
+            padding: 12,
+            border: unansweredCount > 0 ? "1px solid #fed7aa" : "1px solid #bbf7d0",
+            background: unansweredCount > 0 ? "#fff7ed" : "#f0fdf4",
+            borderRadius: 8,
+            display: "grid",
+            gap: 5,
+          }}
+        >
+          <div style={{ fontWeight: 800 }}>未回答一覧（{unansweredCount}名）</div>
+          <div style={{ fontSize: 13, color: unansweredCount > 0 ? "#9a3412" : "#166534" }}>
+            {unansweredChildNames.length > 0
+              ? unansweredChildNames.join("、")
+              : responseRows.length > 0
+                ? "発行済みの連絡帳はすべて回答済みです。"
+                : "児童別連絡帳がまだ発行されていません。"}
+          </div>
+        </div>
+
+        {responseRows.length === 0 ? (
+          <div style={{ color: "#666" }}>
+            児童別連絡帳を発行すると、ここに回答状況が表示されます。
+          </div>
+        ) : filteredResponseRows.length === 0 ? (
+          <div style={{ color: "#666" }}>
+            選択した状態に該当する児童はいません。
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                minWidth: 1900,
+                borderCollapse: "collapse",
+              }}
+            >
+              <thead>
+                <tr style={{ background: "#f1f5f9", textAlign: "left" }}>
+                  <th style={{ padding: 8 }}>児童</th>
+                  <th style={{ padding: 8 }}>回答状態</th>
+                  <th style={{ padding: 8 }}>登降園予定</th>
+                  <th style={{ padding: 8 }}>予定時刻</th>
+                  <th style={{ padding: 8 }}>お迎え予定</th>
+                  <th style={{ padding: 8 }}>家庭での様子</th>
+                  <th style={{ padding: 8 }}>保護者から園へ</th>
+                  <th style={{ padding: 8 }}>回答日時・回数</th>
+                  <th style={{ padding: 8 }}>園確認</th>
+                  <th style={{ padding: 8 }}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredResponseRows.map((row) => {
+                  const entry = row.entry;
+                  const entryId = s(entry.id);
+                  const status = s(entry.responseStatus).toUpperCase();
+                  const updating = updatingResponseEntryId === entryId;
+                  const pickupParts = [
+                    s(entry.plannedPickupRelation),
+                    s(entry.plannedPickupName),
+                  ].filter(Boolean);
+
+                  return (
+                    <tr key={entryId}>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 150,
+                        }}
+                      >
+                        <div style={{ fontWeight: 800 }}>{row.child.displayName}</div>
+                        <div style={{ marginTop: 3, fontSize: 12, color: "#666" }}>
+                          {row.child.kana || s(row.child.id)}
+                        </div>
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 110,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {responseStatusLabel(entry.responseStatus)}
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 120,
+                        }}
+                      >
+                        {attendancePlanTypeLabel(entry.attendancePlanType)}
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 170,
+                          fontSize: 13,
+                        }}
+                      >
+                        <div>登園: {s(entry.plannedArrivalTime) || "-"}</div>
+                        <div>降園: {s(entry.plannedDepartureTime) || "-"}</div>
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 210,
+                          fontSize: 13,
+                        }}
+                      >
+                        <div>{pickupParts.join(" / ") || "-"}</div>
+                        <div style={{ marginTop: 3 }}>
+                          時刻: {s(entry.plannedPickupTime) || "-"}
+                        </div>
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 280,
+                          whiteSpace: "pre-wrap",
+                          lineHeight: 1.55,
+                        }}
+                      >
+                        {s(entry.homeNote) || "-"}
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 280,
+                          whiteSpace: "pre-wrap",
+                          lineHeight: 1.55,
+                        }}
+                      >
+                        {s(entry.parentMessage) || "-"}
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 180,
+                          fontSize: 13,
+                        }}
+                      >
+                        <div>{formatDateTime(entry.submittedAt)}</div>
+                        <div style={{ marginTop: 3, color: "#666" }}>
+                          回答回数: {entry.responseRevision ?? 0}
+                        </div>
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 200,
+                          fontSize: 13,
+                        }}
+                      >
+                        {status === "CONFIRMED" ? (
+                          <>
+                            <div>{formatDateTime(entry.confirmedAt)}</div>
+                            <div style={{ marginTop: 3, color: "#666" }}>
+                              {s(entry.confirmedByName) || s(entry.confirmedByUserId) || "-"}
+                            </div>
+                          </>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 170,
+                        }}
+                      >
+                        {status === "SUBMITTED" ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateResponseConfirmation(entry, "CONFIRMED")
+                            }
+                            disabled={updating}
+                          >
+                            {updating ? "更新中..." : "園確認済みにする"}
+                          </button>
+                        ) : status === "CONFIRMED" ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateResponseConfirmation(entry, "SUBMITTED")
+                            }
+                            disabled={updating}
+                          >
+                            {updating ? "更新中..." : "確認を取り消す"}
+                          </button>
+                        ) : (
+                          <span style={{ color: "#666" }}>回答待ち</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section
+        style={{
+          padding: 16,
+          border: "1px solid #d0d7de",
+          borderRadius: 10,
+          background: "#fff",
+          display: "grid",
+          gap: 12,
+        }}
+      >
+        <div>
+          <h3 style={{ margin: 0 }}>児童別連絡帳・主連絡先・送信管理</h3>
+          <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
+            メール送信対象となる主連絡先と、児童別の発行・送信・回答状態を管理します。回答内容の確認は上の「保護者回答確認」で行います。
           </div>
         </div>
 
