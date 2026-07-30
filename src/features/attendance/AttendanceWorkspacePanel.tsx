@@ -56,6 +56,7 @@ type CareTimeSettingRow = Schema["CareTimeSetting"]["type"];
 type CertificationRow = Schema["ChildCareTimeCertification"]["type"];
 type AttendanceSheetRow = Schema["AttendanceSheet"]["type"];
 type AttendanceRecordRow = Schema["AttendanceRecord"]["type"];
+type ParentNotebookEntryRow = Schema["ParentNotebookEntry"]["type"];
 
 type AttendanceClient = {
   models: {
@@ -72,6 +73,7 @@ type AttendanceClient = {
       GettableModel<AttendanceRecordRow> &
       CreatableModel<AttendanceRecordRow> &
       UpdatableModel<AttendanceRecordRow>;
+    ParentNotebookEntry: ListableModel<ParentNotebookEntryRow>;
   };
 };
 
@@ -86,6 +88,7 @@ type LoadedContext = {
   childContexts: ChildAttendanceContext[];
   sheet: AttendanceSheetRow | null;
   records: AttendanceRecordRow[];
+  parentNotebookEntries: ParentNotebookEntryRow[];
 };
 
 type AttendanceDraft = {
@@ -101,13 +104,11 @@ type AttendanceDraft = {
 };
 
 /**
- * Phase 10-E:
+ * Phase 11-E:
  * Parent-notebook information displayed beside attendance results.
  *
- * MVP2 does not yet have the formal parent-notebook model. Phase 10-E keeps
- * this display contract separate from AttendanceRecord so Phase 11 can load
- * the latest notebook row by childId / targetDate without duplicating parent
- * data into attendance records.
+ * ParentNotebookEntry remains the source of truth. AttendanceRecord stores
+ * only actual attendance results; parent answers are never copied into it.
  */
 type ParentNotebookPlan = {
   linkageStatus:
@@ -116,8 +117,13 @@ type ParentNotebookPlan = {
     | "SUBMITTED"
     | "CONFIRMED";
   submittedAt: string;
+  confirmedAt: string;
   homeNote: string;
+  parentMessage: string;
+  attendancePlanType: string;
   attendancePlanLabel: string;
+  plannedArrivalTime: string;
+  plannedDepartureTime: string;
   plannedPickupRelation: string;
   plannedPickupName: string;
   plannedPickupTime: string;
@@ -331,26 +337,194 @@ function sheetStatusLabel(value: unknown): string {
 function parentNotebookStatusLabel(value: unknown): string {
   const status = s(value).toUpperCase();
   if (status === "NOT_CONNECTED") return "未連携";
-  if (status === "NOT_SUBMITTED") return "未提出";
-  if (status === "SUBMITTED") return "提出済み";
-  if (status === "CONFIRMED") return "確認済み";
+  if (status === "NOT_SUBMITTED") return "未回答";
+  if (status === "SUBMITTED") return "回答あり";
+  if (status === "CONFIRMED") return "園確認済み";
   return status || "未連携";
+}
+
+function parentNotebookAttendancePlanLabel(
+  value: unknown,
+  plannedArrivalTime: unknown,
+  plannedDepartureTime: unknown,
+): string {
+  const type = s(value).toUpperCase();
+  const arrival = s(plannedArrivalTime);
+  const departure = s(plannedDepartureTime);
+
+  if (type === "NORMAL") return "通常登園";
+  if (type === "ABSENT") return "欠席予定";
+  if (type === "LATE") {
+    return arrival ? `遅刻予定（${arrival}登園）` : "遅刻予定";
+  }
+  if (type === "EARLY_DEPARTURE") {
+    return departure ? `早退予定（${departure}降園）` : "早退予定";
+  }
+  if (type === "OTHER") return "その他の予定";
+  return type || "-";
 }
 
 function createUnlinkedParentNotebookPlan(): ParentNotebookPlan {
   return {
     linkageStatus: "NOT_CONNECTED",
     submittedAt: "",
+    confirmedAt: "",
     homeNote: "",
+    parentMessage: "",
+    attendancePlanType: "",
     attendancePlanLabel: "",
+    plannedArrivalTime: "",
+    plannedDepartureTime: "",
     plannedPickupRelation: "",
     plannedPickupName: "",
     plannedPickupTime: "",
   };
 }
 
+function parentNotebookEntrySort(
+  left: ParentNotebookEntryRow,
+  right: ParentNotebookEntryRow,
+): number {
+  const submittedDiff = s(right.submittedAt).localeCompare(s(left.submittedAt));
+  if (submittedDiff !== 0) return submittedDiff;
+
+  const leftUpdatedAt = s(
+    (left as { updatedAt?: string | null }).updatedAt,
+  );
+  const rightUpdatedAt = s(
+    (right as { updatedAt?: string | null }).updatedAt,
+  );
+  const updatedDiff = rightUpdatedAt.localeCompare(leftUpdatedAt);
+  if (updatedDiff !== 0) return updatedDiff;
+
+  return s(right.id).localeCompare(s(left.id));
+}
+
+function buildParentNotebookPlanByChildId(
+  entries: ParentNotebookEntryRow[],
+): Record<string, ParentNotebookPlan> {
+  const result: Record<string, ParentNotebookPlan> = {};
+
+  for (const entry of [...entries].sort(parentNotebookEntrySort)) {
+    const childId = s(entry.childId);
+    if (!childId || result[childId]) continue;
+
+    const responseStatus = s(entry.responseStatus).toUpperCase();
+    const linkageStatus: ParentNotebookPlan["linkageStatus"] =
+      responseStatus === "CONFIRMED"
+        ? "CONFIRMED"
+        : responseStatus === "SUBMITTED"
+          ? "SUBMITTED"
+          : "NOT_SUBMITTED";
+
+    result[childId] = {
+      linkageStatus,
+      submittedAt: s(entry.submittedAt),
+      confirmedAt: s(entry.confirmedAt),
+      homeNote: s(entry.homeNote),
+      parentMessage: s(entry.parentMessage),
+      attendancePlanType: s(entry.attendancePlanType).toUpperCase(),
+      attendancePlanLabel: parentNotebookAttendancePlanLabel(
+        entry.attendancePlanType,
+        entry.plannedArrivalTime,
+        entry.plannedDepartureTime,
+      ),
+      plannedArrivalTime: s(entry.plannedArrivalTime),
+      plannedDepartureTime: s(entry.plannedDepartureTime),
+      plannedPickupRelation: s(entry.plannedPickupRelation),
+      plannedPickupName: s(entry.plannedPickupName),
+      plannedPickupTime: s(entry.plannedPickupTime),
+    };
+  }
+
+  return result;
+}
+
 function pickupPersonLabel(relation: unknown, name: unknown): string {
   return [s(relation), s(name)].filter(Boolean).join(" ") || "-";
+}
+
+function signedMinuteDifferenceLabel(
+  plannedTime: unknown,
+  actualTime: unknown,
+): string {
+  const planned = parseHHMMToMinutes(plannedTime);
+  const actual = parseHHMMToMinutes(actualTime);
+  if (planned === null || actual === null) return "";
+
+  const difference = actual - planned;
+  if (difference === 0) return "予定どおり";
+  if (difference > 0) return `予定より${difference}分遅い`;
+  return `予定より${Math.abs(difference)}分早い`;
+}
+
+function parentNotebookComparisonLines(args: {
+  plan: ParentNotebookPlan;
+  actualAttendanceStatus: string;
+  actualArrivalTime: string;
+  actualDepartureTime: string;
+  actualPickupRelation: string;
+  actualPickupName: string;
+}): string[] {
+  const { plan } = args;
+  if (
+    plan.linkageStatus !== "SUBMITTED" &&
+    plan.linkageStatus !== "CONFIRMED"
+  ) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  const planType = s(plan.attendancePlanType).toUpperCase();
+  const actualStatus = s(args.actualAttendanceStatus).toUpperCase();
+
+  if (planType === "ABSENT") {
+    if (actualStatus === "NOT_ARRIVED" || actualStatus === "NOT_CREATED") {
+      lines.push("欠席予定が実績へ未反映です");
+    } else if (actualStatus && actualStatus !== "ABSENT") {
+      lines.push(
+        `欠席予定ですが、実績は${attendanceStatusLabel(actualStatus)}です`,
+      );
+    }
+  } else if (planType && actualStatus === "ABSENT") {
+    lines.push("登園予定ですが、実績は欠席です");
+  }
+
+  const arrivalDifference = signedMinuteDifferenceLabel(
+    plan.plannedArrivalTime,
+    args.actualArrivalTime,
+  );
+  if (arrivalDifference && arrivalDifference !== "予定どおり") {
+    lines.push(`登園：${arrivalDifference}`);
+  }
+
+  const plannedDepartureTime =
+    plan.plannedDepartureTime || plan.plannedPickupTime;
+  const departureDifference = signedMinuteDifferenceLabel(
+    plannedDepartureTime,
+    args.actualDepartureTime,
+  );
+  if (departureDifference && departureDifference !== "予定どおり") {
+    lines.push(`降園：${departureDifference}`);
+  }
+
+  const plannedPickup = pickupPersonLabel(
+    plan.plannedPickupRelation,
+    plan.plannedPickupName,
+  );
+  const actualPickup = pickupPersonLabel(
+    args.actualPickupRelation,
+    args.actualPickupName,
+  );
+  if (
+    plannedPickup !== "-" &&
+    actualPickup !== "-" &&
+    plannedPickup !== actualPickup
+  ) {
+    lines.push(`お迎え者変更：予定 ${plannedPickup}／実績 ${actualPickup}`);
+  }
+
+  return lines;
 }
 
 function deterministicSheetId(
@@ -632,6 +806,9 @@ export default function AttendanceWorkspacePanel(props: Props) {
   >([]);
   const [sheet, setSheet] = useState<AttendanceSheetRow | null>(null);
   const [records, setRecords] = useState<AttendanceRecordRow[]>([]);
+  const [parentNotebookEntries, setParentNotebookEntries] = useState<
+    ParentNotebookEntryRow[]
+  >([]);
   const [draftByRecordId, setDraftByRecordId] = useState<
     Record<string, AttendanceDraft>
   >({});
@@ -655,16 +832,10 @@ export default function AttendanceWorkspacePanel(props: Props) {
     return map;
   }, [records]);
 
-  /**
-   * Phase 10-E placeholder.
-   *
-   * Phase 11 will replace this empty map with records loaded from the formal
-   * parent-notebook model. The table rendering below is already independent
-   * from that model and needs only a childId-keyed ParentNotebookPlan.
-   */
-  const parentNotebookPlanByChildId = useMemo<
-    Record<string, ParentNotebookPlan>
-  >(() => ({}), []);
+  const parentNotebookPlanByChildId = useMemo(
+    () => buildParentNotebookPlanByChildId(parentNotebookEntries),
+    [parentNotebookEntries],
+  );
 
   const certificationSummary = useMemo(() => {
     let standard = 0;
@@ -732,6 +903,65 @@ export default function AttendanceWorkspacePanel(props: Props) {
       latestDepartureTime: formatHHMMFromMinutes(latestDepartureMinutes),
     };
   }, [draftByRecordId, records]);
+
+  const parentNotebookSummary = useMemo(() => {
+    let notConnected = 0;
+    let notSubmitted = 0;
+    let submitted = 0;
+    let confirmed = 0;
+    let absentPlanned = 0;
+    let latePlanned = 0;
+    let earlyDeparturePlanned = 0;
+    let differenceCount = 0;
+
+    for (const context of childContexts) {
+      const plan = parentNotebookPlanByChildId[context.child.id];
+      if (!plan) {
+        notConnected += 1;
+        continue;
+      }
+
+      if (plan.linkageStatus === "NOT_SUBMITTED") notSubmitted += 1;
+      if (plan.linkageStatus === "SUBMITTED") submitted += 1;
+      if (plan.linkageStatus === "CONFIRMED") confirmed += 1;
+
+      if (plan.attendancePlanType === "ABSENT") absentPlanned += 1;
+      if (plan.attendancePlanType === "LATE") latePlanned += 1;
+      if (plan.attendancePlanType === "EARLY_DEPARTURE") {
+        earlyDeparturePlanned += 1;
+      }
+
+      const record = recordByChildId.get(context.child.id);
+      if (!record) continue;
+      const draft =
+        draftByRecordId[record.id] ?? createDraftFromRecord(record);
+      const comparisons = parentNotebookComparisonLines({
+        plan,
+        actualAttendanceStatus: deriveAttendanceStatus(draft),
+        actualArrivalTime: draft.arrivalTime,
+        actualDepartureTime: draft.departureTime,
+        actualPickupRelation: draft.actualPickupRelation,
+        actualPickupName: draft.actualPickupName,
+      });
+      if (comparisons.length > 0) differenceCount += 1;
+    }
+
+    return {
+      notConnected,
+      notSubmitted,
+      submitted,
+      confirmed,
+      absentPlanned,
+      latePlanned,
+      earlyDeparturePlanned,
+      differenceCount,
+    };
+  }, [
+    childContexts,
+    draftByRecordId,
+    parentNotebookPlanByChildId,
+    recordByChildId,
+  ]);
 
   const editable = isSheetEditable(sheet);
   const normalizedOwnerRole = s(ownerRole).toUpperCase();
@@ -822,11 +1052,18 @@ export default function AttendanceWorkspacePanel(props: Props) {
         childContexts: [],
         sheet: null,
         records: [],
+        parentNotebookEntries: [],
       };
     }
 
-    const [settingRows, enrollmentRows, childRows, certificationRows, sheetRows] =
-      await Promise.all([
+    const [
+      settingRows,
+      enrollmentRows,
+      childRows,
+      certificationRows,
+      sheetRows,
+      parentNotebookEntryRows,
+    ] = await Promise.all([
         listAll(client.models.CareTimeSetting, {
           filter: {
             tenantId: { eq: tenantId },
@@ -864,6 +1101,14 @@ export default function AttendanceWorkspacePanel(props: Props) {
             targetDate: { eq: targetDate },
           },
           limit: 100,
+        }),
+        listAll(client.models.ParentNotebookEntry, {
+          filter: {
+            tenantId: { eq: tenantId },
+            classroomId: { eq: classroomId },
+            targetDate: { eq: targetDate },
+          },
+          limit: 1000,
         }),
       ]);
 
@@ -927,6 +1172,7 @@ export default function AttendanceWorkspacePanel(props: Props) {
       childContexts: nextChildContexts,
       sheet: selectedSheet,
       records: recordRows,
+      parentNotebookEntries: parentNotebookEntryRows,
     };
   }, [classroomId, fiscalYear, targetDate, tenantId]);
 
@@ -935,6 +1181,7 @@ export default function AttendanceWorkspacePanel(props: Props) {
     setChildContexts(loaded.childContexts);
     setSheet(loaded.sheet);
     setRecords(loaded.records);
+    setParentNotebookEntries(loaded.parentNotebookEntries);
     setDraftByRecordId(buildDrafts(loaded.records));
   }, []);
 
@@ -963,6 +1210,7 @@ export default function AttendanceWorkspacePanel(props: Props) {
           missingCertificationCount > 0
             ? `認定区分未設定=${missingCertificationCount}名。`
             : "",
+          `連絡帳Entry=${loaded.parentNotebookEntries.length}件。`,
         ]
           .filter(Boolean)
           .join(" "),
@@ -973,6 +1221,7 @@ export default function AttendanceWorkspacePanel(props: Props) {
       setChildContexts([]);
       setSheet(null);
       setRecords([]);
+      setParentNotebookEntries([]);
       setDraftByRecordId({});
       setMessage(
         `登降園情報の読込エラー: ${
@@ -1563,8 +1812,8 @@ export default function AttendanceWorkspacePanel(props: Props) {
       <div>
         <h2 style={{ margin: 0 }}>登園・降園管理</h2>
         <p className="muted" style={{ marginBottom: 0 }}>
-          Phase 10-E：登園・降園実績と確認フローに加え、保護者連絡帳の予定を
-          実績と並べて確認するための表示領域を準備します。
+          Phase 11-E：保護者連絡帳の回答を児童ID・対象日・クラスで参照し、
+          登園・降園実績と並べて予定差異を確認します。連絡帳回答は登降園記録へ複製しません。
         </p>
       </div>
 
@@ -1665,6 +1914,53 @@ export default function AttendanceWorkspacePanel(props: Props) {
 
       <div style={panelStyle}>
         <div>
+          <h3 style={{ margin: 0 }}>連絡帳の回答・予定</h3>
+          <div className="muted" style={{ marginTop: 4 }}>
+            ParentNotebookEntryを直接参照しています。園側で連絡帳を再読込した後は、
+            この画面でも「再読み込み」を押すと最新回答が反映されます。
+          </div>
+        </div>
+
+        <div style={summaryGridStyle}>
+          <SummaryCard
+            label="未連携"
+            value={`${parentNotebookSummary.notConnected}名`}
+            warning={parentNotebookSummary.notConnected > 0}
+          />
+          <SummaryCard
+            label="未回答"
+            value={`${parentNotebookSummary.notSubmitted}名`}
+          />
+          <SummaryCard
+            label="回答あり"
+            value={`${parentNotebookSummary.submitted}名`}
+          />
+          <SummaryCard
+            label="園確認済み"
+            value={`${parentNotebookSummary.confirmed}名`}
+          />
+          <SummaryCard
+            label="欠席予定"
+            value={`${parentNotebookSummary.absentPlanned}名`}
+          />
+          <SummaryCard
+            label="遅刻予定"
+            value={`${parentNotebookSummary.latePlanned}名`}
+          />
+          <SummaryCard
+            label="早退予定"
+            value={`${parentNotebookSummary.earlyDeparturePlanned}名`}
+          />
+          <SummaryCard
+            label="予定・実績差異"
+            value={`${parentNotebookSummary.differenceCount}名`}
+            warning={parentNotebookSummary.differenceCount > 0}
+          />
+        </div>
+      </div>
+
+      <div style={panelStyle}>
+        <div>
           <h3 style={{ margin: 0 }}>本日の登降園状況</h3>
           <div className="muted" style={{ marginTop: 4 }}>
             入力中の時刻も集計へ反映します。各行の保存後に正式記録となります。
@@ -1740,7 +2036,7 @@ export default function AttendanceWorkspacePanel(props: Props) {
           <h3 style={{ margin: 0 }}>児童別登降園記録</h3>
           <div className="muted" style={{ marginTop: 4 }}>
             「登園」「降園」は現在時刻を即時保存します。手動で時刻や連絡事項を変更した場合は、行の「保存」を押してください。
-            「連絡帳からの予定」はPhase 11の正式モデル接続までは未連携表示です。
+            「連絡帳からの予定」はParentNotebookEntryの最新回答です。予定と実績に差がある場合は、同じ欄に差異を表示します。
           </div>
         </div>
 
@@ -1794,6 +2090,8 @@ export default function AttendanceWorkspacePanel(props: Props) {
                       <td style={tdStyle}>
                         <ParentNotebookPlanCell
                           plan={parentNotebookPlanByChildId[context.child.id]}
+                          actualAttendanceStatus="NOT_CREATED"
+                          actualArrivalTime=""
                           actualPickupRelation=""
                           actualPickupName=""
                           actualDepartureTime=""
@@ -1828,6 +2126,8 @@ export default function AttendanceWorkspacePanel(props: Props) {
                     <td style={tdStyle}>
                       <ParentNotebookPlanCell
                         plan={parentNotebookPlanByChildId[record.childId]}
+                        actualAttendanceStatus={derivedStatus}
+                        actualArrivalTime={draft.arrivalTime}
                         actualPickupRelation={draft.actualPickupRelation}
                         actualPickupName={draft.actualPickupName}
                         actualDepartureTime={draft.departureTime}
@@ -2312,6 +2612,8 @@ const wideInputStyle: CSSProperties = {
 
 function ParentNotebookPlanCell(props: {
   plan?: ParentNotebookPlan | null;
+  actualAttendanceStatus: string;
+  actualArrivalTime: string;
   actualPickupRelation: string;
   actualPickupName: string;
   actualDepartureTime: string;
@@ -2325,9 +2627,17 @@ function ParentNotebookPlanCell(props: {
     props.actualPickupRelation,
     props.actualPickupName,
   );
+  const comparisonLines = parentNotebookComparisonLines({
+    plan,
+    actualAttendanceStatus: props.actualAttendanceStatus,
+    actualArrivalTime: props.actualArrivalTime,
+    actualDepartureTime: props.actualDepartureTime,
+    actualPickupRelation: props.actualPickupRelation,
+    actualPickupName: props.actualPickupName,
+  });
 
   return (
-    <div style={{ display: "grid", gap: 6, minWidth: 210 }}>
+    <div style={{ display: "grid", gap: 6, minWidth: 240 }}>
       <div
         style={{
           display: "inline-flex",
@@ -2336,7 +2646,11 @@ function ParentNotebookPlanCell(props: {
           border: "1px solid #d0d7de",
           borderRadius: 999,
           background:
-            plan.linkageStatus === "NOT_CONNECTED" ? "#f3f4f6" : "#eff6ff",
+            plan.linkageStatus === "NOT_CONNECTED"
+              ? "#f3f4f6"
+              : plan.linkageStatus === "CONFIRMED"
+                ? "#ecfdf5"
+                : "#eff6ff",
           fontSize: 12,
           fontWeight: 700,
         }}
@@ -2346,25 +2660,42 @@ function ParentNotebookPlanCell(props: {
 
       {plan.submittedAt ? (
         <div className="muted" style={{ fontSize: 11 }}>
-          送信 {formatDateTimeJst(plan.submittedAt)}
+          回答 {formatDateTimeJst(plan.submittedAt)}
+          {plan.confirmedAt
+            ? ` / 園確認 ${formatDateTimeJst(plan.confirmedAt)}`
+            : ""}
         </div>
       ) : null}
 
       <div style={{ fontSize: 12 }}>
-        <b>家庭：</b>
-        <span style={{ whiteSpace: "pre-wrap" }}>{plan.homeNote || "-"}</span>
+        <b>登降園予定：</b>
+        {plan.attendancePlanLabel || "-"}
       </div>
       <div style={{ fontSize: 12 }}>
-        <b>登園予定：</b>
-        {plan.attendancePlanLabel || "-"}
+        <b>予定登園：</b>
+        {plan.plannedArrivalTime || "-"}
+      </div>
+      <div style={{ fontSize: 12 }}>
+        <b>予定降園：</b>
+        {plan.plannedDepartureTime || "-"}
       </div>
       <div style={{ fontSize: 12 }}>
         <b>お迎え予定：</b>
         {plannedPickup}
       </div>
       <div style={{ fontSize: 12 }}>
-        <b>予定時刻：</b>
+        <b>お迎え時刻：</b>
         {plan.plannedPickupTime || "-"}
+      </div>
+      <div style={{ fontSize: 12 }}>
+        <b>家庭：</b>
+        <span style={{ whiteSpace: "pre-wrap" }}>{plan.homeNote || "-"}</span>
+      </div>
+      <div style={{ fontSize: 12 }}>
+        <b>園への連絡：</b>
+        <span style={{ whiteSpace: "pre-wrap" }}>
+          {plan.parentMessage || "-"}
+        </span>
       </div>
 
       <div
@@ -2376,6 +2707,16 @@ function ParentNotebookPlanCell(props: {
         }}
       >
         <div>
+          <b>実績：</b>
+          {props.actualAttendanceStatus === "NOT_CREATED"
+            ? "記録未作成"
+            : attendanceStatusLabel(props.actualAttendanceStatus)}
+        </div>
+        <div style={{ marginTop: 3 }}>
+          <b>実績登園：</b>
+          {s(props.actualArrivalTime) || "-"}
+        </div>
+        <div style={{ marginTop: 3 }}>
           <b>実績お迎え：</b>
           {actualPickup}
         </div>
@@ -2384,6 +2725,26 @@ function ParentNotebookPlanCell(props: {
           {s(props.actualDepartureTime) || "-"}
         </div>
       </div>
+
+      {comparisonLines.length > 0 ? (
+        <div
+          style={{
+            padding: 7,
+            border: "1px solid #fed7aa",
+            borderRadius: 6,
+            background: "#fff7ed",
+            color: "#9a3412",
+            fontSize: 11,
+          }}
+        >
+          <b>予定・実績差異</b>
+          {comparisonLines.map((line) => (
+            <div key={line} style={{ marginTop: 3 }}>
+              ・{line}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
