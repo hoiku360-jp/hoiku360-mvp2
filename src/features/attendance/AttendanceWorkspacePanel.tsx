@@ -73,7 +73,8 @@ type AttendanceClient = {
       GettableModel<AttendanceRecordRow> &
       CreatableModel<AttendanceRecordRow> &
       UpdatableModel<AttendanceRecordRow>;
-    ParentNotebookEntry: ListableModel<ParentNotebookEntryRow>;
+    ParentNotebookEntry: ListableModel<ParentNotebookEntryRow> &
+      GettableModel<ParentNotebookEntryRow>;
   };
 };
 
@@ -89,6 +90,7 @@ type LoadedContext = {
   sheet: AttendanceSheetRow | null;
   records: AttendanceRecordRow[];
   parentNotebookEntries: ParentNotebookEntryRow[];
+  parentNotebookLookupSummary: string;
 };
 
 type AttendanceDraft = {
@@ -400,41 +402,77 @@ function parentNotebookEntrySort(
   return s(right.id).localeCompare(s(left.id));
 }
 
+function normalizeChildIdentityText(value: unknown): string {
+  return s(value).replace(/[\s　]+/g, "").toLocaleLowerCase("ja-JP");
+}
+
+function parentNotebookPlanFromEntry(
+  entry: ParentNotebookEntryRow,
+): ParentNotebookPlan {
+  const responseStatus = s(entry.responseStatus).toUpperCase();
+  const linkageStatus: ParentNotebookPlan["linkageStatus"] =
+    responseStatus === "CONFIRMED"
+      ? "CONFIRMED"
+      : responseStatus === "SUBMITTED"
+        ? "SUBMITTED"
+        : "NOT_SUBMITTED";
+
+  return {
+    linkageStatus,
+    submittedAt: s(entry.submittedAt),
+    confirmedAt: s(entry.confirmedAt),
+    homeNote: s(entry.homeNote),
+    parentMessage: s(entry.parentMessage),
+    attendancePlanType: s(entry.attendancePlanType).toUpperCase(),
+    attendancePlanLabel: parentNotebookAttendancePlanLabel(
+      entry.attendancePlanType,
+      entry.plannedArrivalTime,
+      entry.plannedDepartureTime,
+    ),
+    plannedArrivalTime: s(entry.plannedArrivalTime),
+    plannedDepartureTime: s(entry.plannedDepartureTime),
+    plannedPickupRelation: s(entry.plannedPickupRelation),
+    plannedPickupName: s(entry.plannedPickupName),
+    plannedPickupTime: s(entry.plannedPickupTime),
+  };
+}
+
 function buildParentNotebookPlanByChildId(
   entries: ParentNotebookEntryRow[],
+  childContexts: ChildAttendanceContext[],
 ): Record<string, ParentNotebookPlan> {
   const result: Record<string, ParentNotebookPlan> = {};
+  const sortedEntries = [...entries].sort(parentNotebookEntrySort);
 
-  for (const entry of [...entries].sort(parentNotebookEntrySort)) {
+  // Primary linkage: formal Child.id shared by ParentNotebookEntry and
+  // AttendanceRecord / ChildClassroomEnrollment.
+  for (const entry of sortedEntries) {
     const childId = s(entry.childId);
     if (!childId || result[childId]) continue;
+    result[childId] = parentNotebookPlanFromEntry(entry);
+  }
 
-    const responseStatus = s(entry.responseStatus).toUpperCase();
-    const linkageStatus: ParentNotebookPlan["linkageStatus"] =
-      responseStatus === "CONFIRMED"
-        ? "CONFIRMED"
-        : responseStatus === "SUBMITTED"
-          ? "SUBMITTED"
-          : "NOT_SUBMITTED";
+  // Defensive MVP compatibility: if historical Main data contains a childId
+  // snapshot that differs from the current Child.id, use the issued child-name
+  // snapshot only when it identifies exactly one entry for that child.
+  const entriesByNormalizedName = new Map<string, ParentNotebookEntryRow[]>();
+  for (const entry of sortedEntries) {
+    const nameKey = normalizeChildIdentityText(entry.childName);
+    if (!nameKey) continue;
+    const bucket = entriesByNormalizedName.get(nameKey) ?? [];
+    bucket.push(entry);
+    entriesByNormalizedName.set(nameKey, bucket);
+  }
 
-    result[childId] = {
-      linkageStatus,
-      submittedAt: s(entry.submittedAt),
-      confirmedAt: s(entry.confirmedAt),
-      homeNote: s(entry.homeNote),
-      parentMessage: s(entry.parentMessage),
-      attendancePlanType: s(entry.attendancePlanType).toUpperCase(),
-      attendancePlanLabel: parentNotebookAttendancePlanLabel(
-        entry.attendancePlanType,
-        entry.plannedArrivalTime,
-        entry.plannedDepartureTime,
-      ),
-      plannedArrivalTime: s(entry.plannedArrivalTime),
-      plannedDepartureTime: s(entry.plannedDepartureTime),
-      plannedPickupRelation: s(entry.plannedPickupRelation),
-      plannedPickupName: s(entry.plannedPickupName),
-      plannedPickupTime: s(entry.plannedPickupTime),
-    };
+  for (const context of childContexts) {
+    const childId = s(context.child.id);
+    if (!childId || result[childId]) continue;
+
+    const nameKey = normalizeChildIdentityText(context.child.displayName);
+    const nameMatches = entriesByNormalizedName.get(nameKey) ?? [];
+    if (nameMatches.length === 1) {
+      result[childId] = parentNotebookPlanFromEntry(nameMatches[0]);
+    }
   }
 
   return result;
@@ -537,6 +575,13 @@ function deterministicSheetId(
 
 function deterministicRecordId(sheetId: string, childId: string): string {
   return `attendance-record-${sheetId}-${childId}`;
+}
+
+function deterministicParentNotebookEntryId(
+  parentNotebookSheetId: string,
+  childId: string,
+): string {
+  return `parent-notebook-entry-${parentNotebookSheetId}-${childId}`;
 }
 
 function careWindowForCertification(
@@ -833,8 +878,8 @@ export default function AttendanceWorkspacePanel(props: Props) {
   }, [records]);
 
   const parentNotebookPlanByChildId = useMemo(
-    () => buildParentNotebookPlanByChildId(parentNotebookEntries),
-    [parentNotebookEntries],
+    () => buildParentNotebookPlanByChildId(parentNotebookEntries, childContexts),
+    [childContexts, parentNotebookEntries],
   );
 
   const certificationSummary = useMemo(() => {
@@ -1053,6 +1098,7 @@ export default function AttendanceWorkspacePanel(props: Props) {
         sheet: null,
         records: [],
         parentNotebookEntries: [],
+        parentNotebookLookupSummary: "連絡帳検索未実行",
       };
     }
 
@@ -1062,7 +1108,6 @@ export default function AttendanceWorkspacePanel(props: Props) {
       childRows,
       certificationRows,
       sheetRows,
-      parentNotebookEntryRows,
     ] = await Promise.all([
         listAll(client.models.CareTimeSetting, {
           filter: {
@@ -1102,19 +1147,6 @@ export default function AttendanceWorkspacePanel(props: Props) {
           },
           limit: 100,
         }),
-        listAll(client.models.ParentNotebookEntry, {
-          // ParentNotebookWorkspacePanel と同じ決定的Sheet IDで取得する。
-          // classroomId / targetDate の複合filterだけに依存すると、
-          // Main環境で発行済みEntryを取得できないケースがあったため、
-          // 連絡帳の発行単位そのものを検索キーにする。
-          filter: {
-            tenantId: { eq: tenantId },
-            parentNotebookSheetId: {
-              eq: `parent-notebook-sheet-${tenantId}-${classroomId}-${targetDate}`,
-            },
-          },
-          limit: 1000,
-        }),
       ]);
 
     const applicableSettings = settingRows.filter((row) =>
@@ -1153,6 +1185,70 @@ export default function AttendanceWorkspacePanel(props: Props) {
         left.child.displayName.localeCompare(right.child.displayName, "ja"),
       );
 
+    const expectedParentNotebookSheetId =
+      `parent-notebook-sheet-${tenantId}-${classroomId}-${targetDate}`;
+
+    const directEntryResults = await Promise.all(
+      nextChildContexts.map(async (context) => {
+        const entryId = deterministicParentNotebookEntryId(
+          expectedParentNotebookSheetId,
+          context.child.id,
+        );
+        const response = await client.models.ParentNotebookEntry.get({
+          id: entryId,
+        });
+        if (response.errors?.length) {
+          throw new Error(
+            formatModelErrors(
+              response.errors,
+              `連絡帳Entryの取得に失敗しました: ${entryId}`,
+            ),
+          );
+        }
+        return response.data ?? null;
+      }),
+    );
+
+    const directParentNotebookEntries = directEntryResults.filter(
+      (row): row is ParentNotebookEntryRow => Boolean(row),
+    );
+
+    // Mainに決定的ID導入前のEntryが残っている場合だけ、tenant一覧から
+    // 対象日・クラスを照合して補完する。
+    let parentNotebookEntryRows = directParentNotebookEntries;
+    let tenantEntryCount: number | null = null;
+    if (parentNotebookEntryRows.length < nextChildContexts.length) {
+      const allTenantEntries = await listAll(client.models.ParentNotebookEntry, {
+        filter: {
+          tenantId: { eq: tenantId },
+        },
+        limit: 1000,
+      });
+
+      tenantEntryCount = allTenantEntries.length;
+      const fallbackRows = allTenantEntries.filter((row) => {
+        const sameSheet =
+          s(row.parentNotebookSheetId) === expectedParentNotebookSheetId;
+        const sameClassAndDate =
+          s(row.classroomId) === classroomId && s(row.targetDate) === targetDate;
+        return sameSheet || sameClassAndDate;
+      });
+
+      const mergedById = new Map<string, ParentNotebookEntryRow>();
+      for (const row of [...directParentNotebookEntries, ...fallbackRows]) {
+        const id = s(row.id);
+        if (id && !mergedById.has(id)) mergedById.set(id, row);
+      }
+      parentNotebookEntryRows = [...mergedById.values()];
+    }
+
+    const parentNotebookLookupSummary = [
+      `直接取得=${directParentNotebookEntries.length}/${nextChildContexts.length}`,
+      tenantEntryCount === null ? "tenant一覧=未実行" : `tenant一覧=${tenantEntryCount}`,
+      `対象一致=${parentNotebookEntryRows.length}`,
+      `SheetID=${expectedParentNotebookSheetId}`,
+    ].join("、");
+
     const selectedSheet =
       sheetRows
         .filter((row) => s(row.status).toUpperCase() !== "ARCHIVED")
@@ -1178,6 +1274,7 @@ export default function AttendanceWorkspacePanel(props: Props) {
       sheet: selectedSheet,
       records: recordRows,
       parentNotebookEntries: parentNotebookEntryRows,
+      parentNotebookLookupSummary,
     };
   }, [classroomId, fiscalYear, targetDate, tenantId]);
 
@@ -1215,7 +1312,12 @@ export default function AttendanceWorkspacePanel(props: Props) {
           missingCertificationCount > 0
             ? `認定区分未設定=${missingCertificationCount}名。`
             : "",
-          `連絡帳Entry=${loaded.parentNotebookEntries.length}件。`,
+          `連絡帳Entry=${loaded.parentNotebookEntries.length}件、児童紐付け=${Object.keys(
+            buildParentNotebookPlanByChildId(
+              loaded.parentNotebookEntries,
+              loaded.childContexts,
+            ),
+          ).length}件。${loaded.parentNotebookLookupSummary}`, 
         ]
           .filter(Boolean)
           .join(" "),
