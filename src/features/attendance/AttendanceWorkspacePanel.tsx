@@ -1103,10 +1103,15 @@ export default function AttendanceWorkspacePanel(props: Props) {
           limit: 100,
         }),
         listAll(client.models.ParentNotebookEntry, {
+          // ParentNotebookWorkspacePanel と同じ決定的Sheet IDで取得する。
+          // classroomId / targetDate の複合filterだけに依存すると、
+          // Main環境で発行済みEntryを取得できないケースがあったため、
+          // 連絡帳の発行単位そのものを検索キーにする。
           filter: {
             tenantId: { eq: tenantId },
-            classroomId: { eq: classroomId },
-            targetDate: { eq: targetDate },
+            parentNotebookSheetId: {
+              eq: `parent-notebook-sheet-${tenantId}-${classroomId}-${targetDate}`,
+            },
           },
           limit: 1000,
         }),
