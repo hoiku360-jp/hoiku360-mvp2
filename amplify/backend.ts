@@ -1,6 +1,7 @@
 import { defineBackend } from "@aws-amplify/backend";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { auth } from "./auth/resource";
+import { storage } from "./storage/resource";
 import {
   data,
   cleanupTranscriptTextFn,
@@ -20,6 +21,7 @@ import {
 const backend = defineBackend({
   auth,
   data,
+  storage,
   cleanupTranscriptTextFn,
   generateParentNotebookNoticeFn,
   analyzePracticeFn,

@@ -469,6 +469,11 @@ const schema = a.schema({
       parentNotebookSheetId: a.id().required(),
       classroomId: a.id().required(),
       childId: a.id().required(),
+
+      // Phase 12-A1: explicit weekend-letter reference for the public URL.
+      // Do not infer the week from targetDate because Monday notebooks may be
+      // delivered on the preceding Friday.
+      childWeeklyReportId: a.id(),
       childName: a.string().required(),
       targetDate: a.date().required(),
       sortOrder: a.integer(),
@@ -1136,6 +1141,65 @@ AbilityPracticeAgg: a
     ]),
 
   /**
+   * Phase 12-A1:
+   * Photo metadata for one S3 object captured or selected in the Do phase.
+   *
+   * The image binary is stored only in S3. This model keeps the object path,
+   * report / Practice context, child snapshots, and lifecycle state. Multiple
+   * children are stored in childLinksJson to avoid another DynamoDB model in
+   * the MVP while preserving one-photo-to-many-children support.
+   */
+  PhotoAttachment: a
+    .model({
+      tenantId: a.id().required(),
+      fiscalYear: a.integer().required(),
+      classroomId: a.id().required(),
+      targetDate: a.date().required(),
+
+      dailyPlanId: a.id().required(),
+      dailyReportId: a.id().required(),
+      dailyPracticeRecordId: a.id().required(),
+
+      practiceRole: a.string().required(), // PRIMARY / RESERVE
+      practiceCode: a.string().required(),
+      practiceName: a.string().required(),
+
+      storagePath: a.string().required(),
+      contentType: a.string().required(),
+      fileSize: a.integer().required(),
+      width: a.integer().required(),
+      height: a.integer().required(),
+
+      // JSON array of childId / childNameSnapshot / observationRecordId /
+      // sortOrder. observationRecordId may be empty until formal observation
+      // records have been saved.
+      childLinksJson: a.string().required(),
+      caption: a.string(),
+      takenAt: a.datetime(),
+
+      // PRIVATE: daily-report use only. ELIGIBLE: selectable for a weekend
+      // letter, but not yet parent-visible. Actual publication is fixed on
+      // ChildWeeklyReport.finalPhotoSnapshotJson at confirmation time.
+      parentVisibility: a.string().required(), // PRIVATE / ELIGIBLE
+
+      status: a.string().required(), // UPLOADING / ACTIVE / ERROR / ARCHIVED / DELETED
+      uploadErrorMessage: a.string(),
+
+      uploadedAt: a.datetime(),
+      uploadedByUserId: a.id(),
+      uploadedByName: a.string(),
+
+      archivedAt: a.datetime(),
+      archivedByUserId: a.id(),
+
+      createdByUserId: a.id(),
+      updatedByUserId: a.id(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["create", "read", "update", "delete"]),
+    ]),
+
+  /**
    * Phase 3:
    * Impact analysis.
    *
@@ -1300,6 +1364,13 @@ AbilityPracticeAgg: a
       reviewHistoryJson: a.string(),
       deliveryStatus: a.string(), // NOT_READY / READY
       finalParentLetterText: a.string(),
+
+      // Phase 12-A1: teacher-selected photos and the confirmation-time
+      // parent-delivery snapshot. JSON is stored as a string to match the
+      // existing snapshot pattern used throughout MVP2.
+      selectedPhotoSnapshotJson: a.string(),
+      finalPhotoSnapshotJson: a.string(),
+
       deliveryPreparedByUserId: a.id(),
       deliveryPreparedByName: a.string(),
       deliveryPreparedAt: a.datetime(),
