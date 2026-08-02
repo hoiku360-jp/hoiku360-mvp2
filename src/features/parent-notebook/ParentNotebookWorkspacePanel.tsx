@@ -30,6 +30,7 @@ type EnrollmentRow = Schema["ChildClassroomEnrollment"]["type"];
 type GuardianContactRow = Schema["ChildGuardianContact"]["type"];
 type ParentNotebookSheetRow = Schema["ParentNotebookSheet"]["type"];
 type ParentNotebookEntryRow = Schema["ParentNotebookEntry"]["type"];
+type ChildWeeklyReportRow = Schema["ChildWeeklyReport"]["type"];
 
 type SendParentNotebookEmailsArgs = {
   parentNotebookSheetId: string;
@@ -88,6 +89,7 @@ type ParentNotebookClient = {
     ChildGuardianContact: ModelApi<GuardianContactRow>;
     ParentNotebookSheet: ModelApi<ParentNotebookSheetRow>;
     ParentNotebookEntry: ModelApi<ParentNotebookEntryRow>;
+    ChildWeeklyReport: ModelApi<ChildWeeklyReportRow>;
   };
   mutations?: {
     generateParentNotebookNotice?: OperationRunner<
@@ -295,6 +297,63 @@ function responseFilterLabel(value: ResponseFilter): string {
   }
 }
 
+function isEntryDeliveryLocked(entry?: ParentNotebookEntryRow | null): boolean {
+  const deliveryStatus = s(entry?.deliveryStatus).toUpperCase();
+  const responseStatus = s(entry?.responseStatus).toUpperCase();
+  return (
+    deliveryStatus === "SENT" ||
+    responseStatus === "SUBMITTED" ||
+    responseStatus === "CONFIRMED"
+  );
+}
+
+function isSelectableWeeklyReport(
+  report: ChildWeeklyReportRow,
+  args: {
+    tenantId: string;
+    fiscalYear: number;
+    classroomId: string;
+    childId: string;
+  },
+): boolean {
+  return (
+    s(report.id) !== "" &&
+    s(report.tenantId) === args.tenantId &&
+    Number(report.fiscalYear ?? 0) === args.fiscalYear &&
+    s(report.classroomId) === args.classroomId &&
+    s(report.childId) === args.childId &&
+    s(report.status).toUpperCase() === "CONFIRMED" &&
+    s(report.deliveryStatus).toUpperCase() === "READY" &&
+    Boolean(s(report.finalParentLetterText))
+  );
+}
+
+function photoSnapshotCount(value: unknown): number {
+  const text = s(value);
+  if (!text) return 0;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function formatDateOnlyLabel(value?: string | null): string {
+  const text = s(value);
+  if (!text) return "-";
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return text;
+  return `${Number(match[1])}/${Number(match[2])}/${Number(match[3])}`;
+}
+
+function weeklyReportOptionLabel(report: ChildWeeklyReportRow): string {
+  const period = `${formatDateOnlyLabel(report.weekStartDate)}～${formatDateOnlyLabel(report.weekEndDate)}`;
+  const title = s(report.title) || "週末こどもだより";
+  const photoCount = photoSnapshotCount(report.finalPhotoSnapshotJson);
+  return `${period}「${title}」写真${photoCount}枚`;
+}
+
 function sheetStatusLabel(value?: string | null): string {
   switch (s(value).toUpperCase()) {
     case "DRAFT":
@@ -347,6 +406,10 @@ export default function ParentNotebookWorkspacePanel(props: {
     currentClassroomId ?? "",
   );
   const [workspaceRows, setWorkspaceRows] = useState<ChildWorkspaceRow[]>([]);
+  const [weeklyReports, setWeeklyReports] = useState<ChildWeeklyReportRow[]>([]);
+  const [weeklyReportSelections, setWeeklyReportSelections] = useState<
+    Record<string, string>
+  >({});
   const [sheet, setSheet] = useState<ParentNotebookSheetRow | null>(null);
   const [noticeDraft, setNoticeDraft] = useState("");
   const [aiManualNote, setAiManualNote] = useState("");
@@ -403,15 +466,40 @@ export default function ParentNotebookWorkspacePanel(props: {
     )
     .map((row) => s(row.child.displayName))
     .filter(Boolean);
-  const lockedEntryCount = workspaceRows.filter((row) => {
-    const deliveryStatus = s(row.entry?.deliveryStatus).toUpperCase();
-    const responseStatus = s(row.entry?.responseStatus).toUpperCase();
-    return (
-      deliveryStatus === "SENT" ||
-      responseStatus === "SUBMITTED" ||
-      responseStatus === "CONFIRMED"
-    );
-  }).length;
+  const lockedEntryCount = workspaceRows.filter((row) =>
+    isEntryDeliveryLocked(row.entry),
+  ).length;
+  const linkedWeeklyReportCount = workspaceRows.filter((row) =>
+    Boolean(s(row.entry?.childWeeklyReportId)),
+  ).length;
+  const weeklyReportsById = useMemo(
+    () => new Map(weeklyReports.map((report) => [s(report.id), report])),
+    [weeklyReports],
+  );
+  const selectableWeeklyReportsByChildId = useMemo(() => {
+    const buckets = new Map<string, ChildWeeklyReportRow[]>();
+    for (const report of weeklyReports) {
+      const childId = s(report.childId);
+      if (!childId) continue;
+      if (!isSelectableWeeklyReport(report, {
+        tenantId,
+        fiscalYear,
+        classroomId: selectedClassroomId,
+        childId,
+      })) continue;
+      const bucket = buckets.get(childId) ?? [];
+      bucket.push(report);
+      buckets.set(childId, bucket);
+    }
+    for (const bucket of buckets.values()) {
+      bucket.sort((left, right) => {
+        const startDiff = s(right.weekStartDate).localeCompare(s(left.weekStartDate));
+        if (startDiff !== 0) return startDiff;
+        return s(right.id).localeCompare(s(left.id));
+      });
+    }
+    return buckets;
+  }, [fiscalYear, selectedClassroomId, tenantId, weeklyReports]);
 
   async function loadClassrooms() {
     setLoadingClassrooms(true);
@@ -490,8 +578,14 @@ export default function ParentNotebookWorkspacePanel(props: {
     try {
       const sheetId = sheetIdFor(tenantId, selectedClassroomId, targetDate);
 
-      const [enrollmentRes, childRes, contactRes, sheetRes, entryRes] =
-        await Promise.all([
+      const [
+        enrollmentRes,
+        childRes,
+        contactRes,
+        sheetRes,
+        entryRes,
+        weeklyReportRes,
+      ] = await Promise.all([
           client.models.ChildClassroomEnrollment.list({
             filter: {
               tenantId: { eq: tenantId },
@@ -520,6 +614,13 @@ export default function ParentNotebookWorkspacePanel(props: {
             },
             limit: 1000,
           }),
+          client.models.ChildWeeklyReport.list({
+            filter: {
+              tenantId: { eq: tenantId },
+              classroomId: { eq: selectedClassroomId },
+            },
+            limit: 1000,
+          }),
         ]);
 
       const allErrors = [
@@ -527,6 +628,7 @@ export default function ParentNotebookWorkspacePanel(props: {
         ...(childRes.errors ?? []),
         ...(contactRes.errors ?? []),
         ...(entryRes.errors ?? []),
+        ...(weeklyReportRes.errors ?? []),
       ];
 
       if (allErrors.length > 0) {
@@ -557,6 +659,13 @@ export default function ParentNotebookWorkspacePanel(props: {
       const entryByChildId = new Map(
         (entryRes.data ?? []).map((row) => [s(row.childId), row]),
       );
+      const loadedWeeklyReports = (weeklyReportRes.data ?? [])
+        .filter((row) => Number(row.fiscalYear ?? 0) === fiscalYear)
+        .sort((left, right) => {
+          const startDiff = s(right.weekStartDate).localeCompare(s(left.weekStartDate));
+          if (startDiff !== 0) return startDiff;
+          return s(right.id).localeCompare(s(left.id));
+        });
 
       const rows: ChildWorkspaceRow[] = enrollments
         .map((enrollment) => {
@@ -580,6 +689,7 @@ export default function ParentNotebookWorkspacePanel(props: {
         );
 
       const drafts: Record<string, ContactDraft> = {};
+      const reportSelections: Record<string, string> = {};
       for (const row of rows) {
         const childId = s(row.child.id);
         drafts[childId] = {
@@ -588,9 +698,12 @@ export default function ParentNotebookWorkspacePanel(props: {
           guardianName: s(row.contact?.guardianName),
           email: s(row.contact?.email),
         };
+        reportSelections[childId] = s(row.entry?.childWeeklyReportId);
       }
 
       setWorkspaceRows(rows);
+      setWeeklyReports(loadedWeeklyReports);
+      setWeeklyReportSelections(reportSelections);
       setContactDrafts(drafts);
       setSheet(sheetRes.data ?? null);
       setNoticeDraft(
@@ -600,11 +713,22 @@ export default function ParentNotebookWorkspacePanel(props: {
       setMessage(
         `連絡帳を読み込みました。対象児童=${rows.length}名、連絡先登録=${
           rows.filter((row) => row.contact).length
-        }名、発行済み=${rows.filter((row) => row.entry).length}名`,
+        }名、発行済み=${rows.filter((row) => row.entry).length}名、確認済み週末だより=${
+          loadedWeeklyReports.filter((report) =>
+            isSelectableWeeklyReport(report, {
+              tenantId,
+              fiscalYear,
+              classroomId: selectedClassroomId,
+              childId: s(report.childId),
+            }),
+          ).length
+        }件`,
       );
     } catch (error) {
       console.error(error);
       setWorkspaceRows([]);
+      setWeeklyReports([]);
+      setWeeklyReportSelections({});
       setContactDrafts({});
       setSheet(null);
       setNoticeDraft("");
@@ -877,6 +1001,44 @@ export default function ParentNotebookWorkspacePanel(props: {
       return;
     }
 
+    const invalidSelectionRows = workspaceRows.filter((row) => {
+      if (isEntryDeliveryLocked(row.entry)) return false;
+      const childId = s(row.child.id);
+      const selectedId = s(weeklyReportSelections[childId]);
+      if (!selectedId) return false;
+      const report = weeklyReportsById.get(selectedId);
+      return !report || !isSelectableWeeklyReport(report, {
+        tenantId,
+        fiscalYear,
+        classroomId: selectedClassroomId,
+        childId,
+      });
+    });
+    if (invalidSelectionRows.length > 0) {
+      setMessage(
+        `週末こどもだよりを確認できない児童がいます: ${invalidSelectionRows
+          .map((row) => s(row.child.displayName))
+          .filter(Boolean)
+          .join("、")}。確認済み・発信準備完了の週末だよりを選び直してください。`,
+      );
+      return;
+    }
+
+    const changedLockedRows = workspaceRows.filter((row) => {
+      if (!isEntryDeliveryLocked(row.entry)) return false;
+      const childId = s(row.child.id);
+      return s(weeklyReportSelections[childId]) !== s(row.entry?.childWeeklyReportId);
+    });
+    if (changedLockedRows.length > 0) {
+      setMessage(
+        `送信済みまたは回答済みのため週末こどもだよりを変更できない児童がいます: ${changedLockedRows
+          .map((row) => s(row.child.displayName))
+          .filter(Boolean)
+          .join("、")}`,
+      );
+      return;
+    }
+
     const issuedText = s(sheet?.noticeText);
     const noticeChanged = Boolean(issuedText) && issuedText !== noticeDraft.trim();
     if (lockedEntryCount > 0 && noticeChanged) {
@@ -933,6 +1095,9 @@ export default function ParentNotebookWorkspacePanel(props: {
         const existingDeliveryStatus = s(
           existingEntry?.deliveryStatus,
         ).toUpperCase();
+        const childWeeklyReportId = isEntryDeliveryLocked(existingEntry)
+          ? s(existingEntry?.childWeeklyReportId)
+          : s(weeklyReportSelections[childId]);
         const deliveryStatus = existingEntry
           ? existingDeliveryStatus === "SKIPPED" && hasContact
             ? "NOT_SENT"
@@ -950,6 +1115,7 @@ export default function ParentNotebookWorkspacePanel(props: {
           parentNotebookSheetId: sheetId,
           classroomId: selectedClassroomId,
           childId,
+          childWeeklyReportId: childWeeklyReportId || null,
           childName: s(row.child.displayName),
           targetDate,
           sortOrder: index + 1,
@@ -1393,6 +1559,7 @@ export default function ParentNotebookWorkspacePanel(props: {
           ["メール送信済み", sentCount],
           ["メール送信失敗", failedCount],
           ["連絡先登録", contactCount],
+          ["週末だより紐付け", linkedWeeklyReportCount],
         ].map(([label, value]) => (
           <div
             key={String(label)}
@@ -1690,9 +1857,23 @@ export default function ParentNotebookWorkspacePanel(props: {
         }}
       >
         <div>
-          <h3 style={{ margin: 0 }}>児童別連絡帳・主連絡先・送信管理</h3>
+          <h3 style={{ margin: 0 }}>児童別連絡帳・週末だより・送信管理</h3>
           <div style={{ marginTop: 4, color: "#555", fontSize: 13 }}>
-            メール送信対象となる主連絡先と、児童別の発行・送信・回答状態を管理します。回答内容の確認は上の「保護者回答確認」で行います。
+            メール送信対象となる主連絡先と、児童別に掲載する確認済み週末こどもだよりを選択して発行します。回答内容の確認は上の「保護者回答確認」で行います。
+          </div>
+          <div
+            style={{
+              marginTop: 8,
+              padding: 10,
+              border: "1px solid #dbeafe",
+              borderRadius: 8,
+              background: "#f6fbff",
+              color: "#334155",
+              fontSize: 12,
+              lineHeight: 1.7,
+            }}
+          >
+            「添付しない」も選択できます。メール送信済み、または保護者回答済みの児童は、URLで表示する週末だよりが後から変わらないよう選択を固定します。
           </div>
         </div>
 
@@ -1705,7 +1886,7 @@ export default function ParentNotebookWorkspacePanel(props: {
             <table
               style={{
                 width: "100%",
-                minWidth: 1630,
+                minWidth: 2050,
                 borderCollapse: "collapse",
               }}
             >
@@ -1716,6 +1897,7 @@ export default function ParentNotebookWorkspacePanel(props: {
                   <th style={{ padding: 8 }}>保護者氏名</th>
                   <th style={{ padding: 8 }}>メールアドレス</th>
                   <th style={{ padding: 8 }}>連絡先操作</th>
+                  <th style={{ padding: 8 }}>週末こどもだより</th>
                   <th style={{ padding: 8 }}>発行</th>
                   <th style={{ padding: 8 }}>送信</th>
                   <th style={{ padding: 8 }}>送信日時・結果</th>
@@ -1733,6 +1915,24 @@ export default function ParentNotebookWorkspacePanel(props: {
                     email: "",
                   };
                   const savingContact = savingContactChildId === childId;
+                  const entryLocked = isEntryDeliveryLocked(row.entry);
+                  const selectableReports =
+                    selectableWeeklyReportsByChildId.get(childId) ?? [];
+                  const selectedWeeklyReportId = s(
+                    weeklyReportSelections[childId],
+                  );
+                  const selectedWeeklyReport = selectedWeeklyReportId
+                    ? weeklyReportsById.get(selectedWeeklyReportId) ?? null
+                    : null;
+                  const selectedIsSelectable = Boolean(
+                    selectedWeeklyReport &&
+                      isSelectableWeeklyReport(selectedWeeklyReport, {
+                        tenantId,
+                        fiscalYear,
+                        classroomId: selectedClassroomId,
+                        childId,
+                      }),
+                  );
 
                   return (
                     <tr key={childId}>
@@ -1842,6 +2042,73 @@ export default function ParentNotebookWorkspacePanel(props: {
                               ? "連絡先更新"
                               : "連絡先登録"}
                         </button>
+                      </td>
+                      <td
+                        style={{
+                          padding: 8,
+                          borderBottom: "1px solid #e5e7eb",
+                          minWidth: 350,
+                          verticalAlign: "top",
+                        }}
+                      >
+                        <select
+                          value={selectedWeeklyReportId}
+                          onChange={(event) =>
+                            setWeeklyReportSelections((previous) => ({
+                              ...previous,
+                              [childId]: event.target.value,
+                            }))
+                          }
+                          disabled={entryLocked || issuing || sendingEmails}
+                          style={{
+                            width: "100%",
+                            boxSizing: "border-box",
+                          }}
+                        >
+                          <option value="">添付しない</option>
+                          {selectedWeeklyReportId && !selectedIsSelectable ? (
+                            <option value={selectedWeeklyReportId}>
+                              紐付け済み（現在は候補外）: {selectedWeeklyReport?.title || selectedWeeklyReportId}
+                            </option>
+                          ) : null}
+                          {selectableReports.map((report) => (
+                            <option key={s(report.id)} value={s(report.id)}>
+                              {weeklyReportOptionLabel(report)}
+                            </option>
+                          ))}
+                        </select>
+                        <div
+                          style={{
+                            marginTop: 5,
+                            color: selectedWeeklyReportId
+                              ? selectedIsSelectable
+                                ? "#166534"
+                                : "#b45309"
+                              : "#64748b",
+                            fontSize: 12,
+                            lineHeight: 1.55,
+                          }}
+                        >
+                          {selectedWeeklyReportId
+                            ? selectedIsSelectable
+                              ? `選択中: ${weeklyReportOptionLabel(selectedWeeklyReport as ChildWeeklyReportRow)}`
+                              : "現在の紐付け先は確認済み・発信準備完了の候補ではありません。未送信の場合は選び直してください。"
+                            : selectableReports.length > 0
+                              ? `選択可能 ${selectableReports.length}件`
+                              : "確認済み・発信準備完了の週末だよりはありません。"}
+                        </div>
+                        {entryLocked ? (
+                          <div
+                            style={{
+                              marginTop: 4,
+                              color: "#92400e",
+                              fontSize: 12,
+                              fontWeight: 700,
+                            }}
+                          >
+                            送信・回答後のため固定
+                          </div>
+                        ) : null}
                       </td>
                       <td
                         style={{
