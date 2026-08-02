@@ -85,3 +85,15 @@ backend.sendParentNotebookEmailsFn.resources.lambda.addToRolePolicy(
   }),
 );
 
+// Phase 12-E: the public parent-notebook Lambda can create short-lived signed
+// URLs only for objects under the private photo prefix. The bucket itself
+// remains non-public and the function receives no write or delete permission.
+backend.storage.resources.bucket.grantRead(
+  backend.getParentNotebookContextFn.resources.lambda,
+  "photos/*",
+);
+backend.getParentNotebookContextFn.addEnvironment(
+  "HOIKU360_PHOTOS_BUCKET_NAME",
+  backend.storage.resources.bucket.bucketName,
+);
+

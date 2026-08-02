@@ -654,6 +654,15 @@ const schema = a.schema({
    * The Lambda validates the token hash and returns only the issued notice and
    * that child's latest response values. Guardian contact data is never exposed.
    */
+  ParentNotebookWeekendPhotoResponse: a.customType({
+    photoAttachmentId: a.id().required(),
+    photoUrl: a.string().required(),
+    caption: a.string(),
+    targetDate: a.date(),
+    takenAt: a.datetime(),
+    sortOrder: a.integer().required(),
+  }),
+
   GetParentNotebookContextResponse: a.customType({
     parentNotebookSheetId: a.id(),
     parentNotebookEntryId: a.id(),
@@ -662,6 +671,13 @@ const schema = a.schema({
     childName: a.string(),
     targetDate: a.date(),
     noticeText: a.string(),
+
+    weekendLetterId: a.id(),
+    weekendLetterTitle: a.string(),
+    weekendLetterText: a.string(),
+    weekStartDate: a.date(),
+    weekEndDate: a.date(),
+    weekendLetterPhotos: a.ref("ParentNotebookWeekendPhotoResponse").array(),
 
     responseStatus: a.string(),
     attendancePlanType: a.string(),

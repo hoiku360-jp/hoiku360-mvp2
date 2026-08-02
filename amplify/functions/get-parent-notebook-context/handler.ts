@@ -3,6 +3,8 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { env } from "$amplify/env/get-parent-notebook-context";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createHash } from "node:crypto";
 
 type DataClientEnv = Parameters<typeof getAmplifyDataClientConfig>[0];
@@ -23,6 +25,40 @@ type ParentNotebookEntryRow = Schema["ParentNotebookEntry"]["type"] & {
 type ParentNotebookSheetRow = Schema["ParentNotebookSheet"]["type"] & {
   id: string;
 };
+
+type ChildWeeklyReportRow = Schema["ChildWeeklyReport"]["type"] & {
+  id: string;
+};
+
+type FinalPhotoSnapshot = {
+  photoAttachmentId: string;
+  storagePath: string;
+  caption: string;
+  takenAt: string;
+  targetDate: string;
+  sortOrder: number;
+};
+
+type WeekendPhotoResponse = {
+  photoAttachmentId: string;
+  photoUrl: string;
+  caption: string | null;
+  targetDate: string | null;
+  takenAt: string | null;
+  sortOrder: number;
+};
+
+type WeekendLetterContext = {
+  weekendLetterId: string;
+  weekendLetterTitle: string | null;
+  weekendLetterText: string;
+  weekStartDate: string | null;
+  weekEndDate: string | null;
+  weekendLetterPhotos: WeekendPhotoResponse[];
+};
+
+const SIGNED_PHOTO_URL_EXPIRES_SECONDS = 300;
+const MAX_WEEKEND_PHOTOS = 3;
 
 function s(value: unknown): string {
   return String(value ?? "").trim();
@@ -96,6 +132,182 @@ function validateTokenReferences(
     throw new Error(
       "返信URLの内部情報に不整合があります。園側でURLを再発行してください。",
     );
+  }
+}
+
+function validateWeeklyReportReferences(
+  entry: ParentNotebookEntryRow,
+  report: ChildWeeklyReportRow,
+) {
+  if (
+    s(entry.childWeeklyReportId) !== report.id ||
+    s(entry.tenantId) !== s(report.tenantId) ||
+    s(entry.classroomId) !== s(report.classroomId) ||
+    s(entry.childId) !== s(report.childId) ||
+    Number(entry.fiscalYear ?? 0) !== Number(report.fiscalYear ?? 0)
+  ) {
+    throw new Error("週末こどもだよりの参照情報に不整合があります。");
+  }
+}
+
+function parseFinalPhotoSnapshots(value: unknown): FinalPhotoSnapshot[] {
+  const text = s(value);
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item): FinalPhotoSnapshot | null => {
+        if (!item || typeof item !== "object") return null;
+        const row = item as Record<string, unknown>;
+        const photoAttachmentId = s(row.photoAttachmentId);
+        const storagePath = s(row.storagePath);
+        const sortOrder = Number(row.sortOrder);
+
+        if (!photoAttachmentId || !storagePath) return null;
+
+        return {
+          photoAttachmentId,
+          storagePath,
+          caption: s(row.caption),
+          takenAt: s(row.takenAt),
+          targetDate: s(row.targetDate),
+          sortOrder:
+            Number.isFinite(sortOrder) && sortOrder > 0 ? sortOrder : 1,
+        };
+      })
+      .filter((row): row is FinalPhotoSnapshot => Boolean(row))
+      .sort((left, right) => left.sortOrder - right.sortOrder)
+      .slice(0, MAX_WEEKEND_PHOTOS)
+      .map((row, index) => ({ ...row, sortOrder: index + 1 }));
+  } catch {
+    return [];
+  }
+}
+
+function isSafePhotoStoragePath(
+  storagePath: string,
+  report: ChildWeeklyReportRow,
+): boolean {
+  if (
+    !storagePath ||
+    storagePath.startsWith("/") ||
+    storagePath.includes("\\") ||
+    storagePath.split("/").includes("..") ||
+    storagePath.includes("://")
+  ) {
+    return false;
+  }
+
+  const expectedPrefix = [
+    "photos",
+    s(report.tenantId),
+    String(Number(report.fiscalYear ?? 0)),
+    s(report.classroomId),
+    "",
+  ].join("/");
+
+  return storagePath.startsWith(expectedPrefix);
+}
+
+async function loadWeekendLetterContext(args: {
+  dataClient: ReturnType<typeof generateClient<Schema>>;
+  entry: ParentNotebookEntryRow;
+}): Promise<WeekendLetterContext | null> {
+  const reportId = s(args.entry.childWeeklyReportId);
+  if (!reportId) return null;
+
+  try {
+    const reportResult = await args.dataClient.models.ChildWeeklyReport.get({
+      id: reportId,
+    });
+
+    if (reportResult.errors?.length) {
+      throw new Error(
+        errorText(
+          reportResult.errors,
+          "週末こどもだよりの取得に失敗しました。",
+        ),
+      );
+    }
+
+    const report =
+      (reportResult.data as ChildWeeklyReportRow | null) ?? null;
+    if (!report) return null;
+
+    validateWeeklyReportReferences(args.entry, report);
+
+    if (
+      s(report.status).toUpperCase() !== "CONFIRMED" ||
+      s(report.deliveryStatus).toUpperCase() !== "READY" ||
+      !s(report.finalParentLetterText)
+    ) {
+      return null;
+    }
+
+    const bucketName = s(process.env.HOIKU360_PHOTOS_BUCKET_NAME);
+    const snapshots = parseFinalPhotoSnapshots(report.finalPhotoSnapshotJson)
+      .filter((snapshot) => isSafePhotoStoragePath(snapshot.storagePath, report));
+
+    let weekendLetterPhotos: WeekendPhotoResponse[] = [];
+
+    if (bucketName && snapshots.length > 0) {
+      const s3Client = new S3Client({
+        region: process.env.AWS_REGION || "ap-northeast-1",
+      });
+
+      const signedRows = await Promise.all(
+        snapshots.map(async (snapshot): Promise<WeekendPhotoResponse | null> => {
+          try {
+            const photoUrl = await getSignedUrl(
+              s3Client,
+              new GetObjectCommand({
+                Bucket: bucketName,
+                Key: snapshot.storagePath,
+                ResponseContentDisposition: "inline",
+              }),
+              { expiresIn: SIGNED_PHOTO_URL_EXPIRES_SECONDS },
+            );
+
+            return {
+              photoAttachmentId: snapshot.photoAttachmentId,
+              photoUrl,
+              caption: snapshot.caption || null,
+              targetDate: snapshot.targetDate || null,
+              takenAt: snapshot.takenAt || null,
+              sortOrder: snapshot.sortOrder,
+            };
+          } catch (error) {
+            console.warn(
+              "Failed to create a signed weekend-photo URL.",
+              snapshot.photoAttachmentId,
+              error,
+            );
+            return null;
+          }
+        }),
+      );
+
+      weekendLetterPhotos = signedRows.filter(
+        (row): row is WeekendPhotoResponse => Boolean(row),
+      );
+    }
+
+    return {
+      weekendLetterId: report.id,
+      weekendLetterTitle: s(report.title) || null,
+      weekendLetterText: s(report.finalParentLetterText),
+      weekStartDate: s(report.weekStartDate) || null,
+      weekEndDate: s(report.weekEndDate) || null,
+      weekendLetterPhotos,
+    };
+  } catch (error) {
+    // Fail closed for the optional weekend-letter section while preserving the
+    // normal parent-notebook response form.
+    console.warn("Weekend letter context was not exposed.", reportId, error);
+    return null;
   }
 }
 
@@ -191,6 +403,11 @@ export const handler: Schema["getParentNotebookContext"]["functionHandler"] =
       throw new Error("この連絡帳はまだ発行されていません。");
     }
 
+    const weekendLetter = await loadWeekendLetterContext({
+      dataClient,
+      entry,
+    });
+
     const responseStatus = s(entry.responseStatus) || "NOT_SUBMITTED";
     const contextStatus = sheetStatus === "CLOSED" ? "CLOSED" : "OK";
 
@@ -202,6 +419,13 @@ export const handler: Schema["getParentNotebookContext"]["functionHandler"] =
       childName: s(entry.childName) || null,
       targetDate: s(entry.targetDate) || null,
       noticeText: s(sheet.noticeText) || s(sheet.noticeDraftText) || null,
+
+      weekendLetterId: weekendLetter?.weekendLetterId ?? null,
+      weekendLetterTitle: weekendLetter?.weekendLetterTitle ?? null,
+      weekendLetterText: weekendLetter?.weekendLetterText ?? null,
+      weekStartDate: weekendLetter?.weekStartDate ?? null,
+      weekEndDate: weekendLetter?.weekEndDate ?? null,
+      weekendLetterPhotos: weekendLetter?.weekendLetterPhotos ?? [],
 
       responseStatus,
       attendancePlanType: s(entry.attendancePlanType) || null,

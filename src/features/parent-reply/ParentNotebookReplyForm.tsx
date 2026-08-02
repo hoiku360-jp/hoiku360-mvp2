@@ -19,6 +19,15 @@ type GetParentNotebookContextArgs = {
   replyToken: string;
 };
 
+type ParentNotebookWeekendPhoto = {
+  photoAttachmentId?: string | null;
+  photoUrl?: string | null;
+  caption?: string | null;
+  targetDate?: string | null;
+  takenAt?: string | null;
+  sortOrder?: number | null;
+};
+
 type GetParentNotebookContextResult = {
   parentNotebookSheetId?: string | null;
   parentNotebookEntryId?: string | null;
@@ -27,6 +36,13 @@ type GetParentNotebookContextResult = {
   childName?: string | null;
   targetDate?: string | null;
   noticeText?: string | null;
+
+  weekendLetterId?: string | null;
+  weekendLetterTitle?: string | null;
+  weekendLetterText?: string | null;
+  weekStartDate?: string | null;
+  weekEndDate?: string | null;
+  weekendLetterPhotos?: (ParentNotebookWeekendPhoto | null)[] | null;
 
   responseStatus?: string | null;
   attendancePlanType?: string | null;
@@ -160,6 +176,34 @@ function formatDateTime(value?: string | null): string {
   return date.toLocaleString("ja-JP");
 }
 
+function formatWeekendPeriod(
+  startValue?: string | null,
+  endValue?: string | null,
+): string {
+  const start = formatTargetDate(startValue);
+  const end = formatTargetDate(endValue);
+  if (start === "-" && end === "-") return "";
+  if (start === end || end === "-") return start;
+  if (start === "-") return end;
+  return `${start} ～ ${end}`;
+}
+
+function weekendLetterBodyText(
+  titleValue?: string | null,
+  textValue?: string | null,
+): string {
+  const title = s(titleValue);
+  const text = s(textValue);
+  if (!title || !text) return text;
+  if (text === title) return "";
+  if (text.startsWith(`${title}
+
+`)) return text.slice(title.length + 2).trim();
+  if (text.startsWith(`${title}
+`)) return text.slice(title.length + 1).trim();
+  return text;
+}
+
 function isValidHHMM(value: string): boolean {
   if (!value) return true;
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
@@ -215,6 +259,17 @@ export default function ParentNotebookReplyForm() {
   const responseRevision = Number(context?.responseRevision ?? 0);
   const alreadySubmitted = ["SUBMITTED", "CONFIRMED"].includes(
     s(context?.responseStatus).toUpperCase(),
+  );
+  const weekendLetterPhotos = (context?.weekendLetterPhotos ?? [])
+    .filter((row): row is ParentNotebookWeekendPhoto => Boolean(row && s(row.photoUrl)))
+    .sort((left, right) => Number(left.sortOrder ?? 0) - Number(right.sortOrder ?? 0));
+  const weekendLetterPeriod = formatWeekendPeriod(
+    context?.weekStartDate,
+    context?.weekEndDate,
+  );
+  const weekendLetterBody = weekendLetterBodyText(
+    context?.weekendLetterTitle,
+    context?.weekendLetterText,
   );
 
   function applyContext(data: GetParentNotebookContextResult) {
@@ -525,6 +580,115 @@ export default function ParentNotebookReplyForm() {
                 {context.noticeText || "園からの連絡はありません。"}
               </div>
             </section>
+
+            {s(context.weekendLetterText) ? (
+              <section
+                style={{
+                  padding: 20,
+                  background: "#fff",
+                  border: "1px solid #bbf7d0",
+                  borderRadius: 12,
+                  display: "grid",
+                  gap: 14,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 8,
+                    alignItems: "baseline",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <div>
+                    <div style={{ color: "#166534", fontSize: 13, fontWeight: 800 }}>
+                      週末こどもだより
+                    </div>
+                    <h2 style={{ margin: "4px 0 0", fontSize: 20 }}>
+                      {context.weekendLetterTitle || "週末こどもだより"}
+                    </h2>
+                  </div>
+                  {weekendLetterPeriod ? (
+                    <div style={{ color: "#64748b", fontSize: 13 }}>
+                      {weekendLetterPeriod}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div
+                  style={{
+                    padding: 14,
+                    whiteSpace: "pre-wrap",
+                    lineHeight: 1.85,
+                    border: "1px solid #dcfce7",
+                    background: "#f7fff9",
+                    borderRadius: 10,
+                  }}
+                >
+                  {weekendLetterBody || context.weekendLetterText}
+                </div>
+
+                {weekendLetterPhotos.length > 0 ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                      gap: 12,
+                    }}
+                  >
+                    {weekendLetterPhotos.map((photo, index) => (
+                      <figure
+                        key={s(photo.photoAttachmentId) || `${s(photo.photoUrl)}-${index}`}
+                        style={{
+                          margin: 0,
+                          padding: 10,
+                          border: "1px solid #dcfce7",
+                          borderRadius: 12,
+                          background: "#fff",
+                          display: "grid",
+                          gap: 8,
+                        }}
+                      >
+                        <a
+                          href={s(photo.photoUrl)}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ display: "block" }}
+                        >
+                          <img
+                            src={s(photo.photoUrl)}
+                            alt={s(photo.caption) || `${context.childName || "お子さま"}さんの写真${index + 1}`}
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              aspectRatio: "4 / 3",
+                              objectFit: "cover",
+                              borderRadius: 8,
+                              background: "#f1f5f9",
+                            }}
+                          />
+                        </a>
+                        <figcaption style={{ display: "grid", gap: 3 }}>
+                          {s(photo.caption) ? (
+                            <span style={{ color: "#334155", lineHeight: 1.6 }}>
+                              {photo.caption}
+                            </span>
+                          ) : null}
+                          {s(photo.targetDate) ? (
+                            <small style={{ color: "#64748b" }}>
+                              {formatTargetDate(photo.targetDate)}
+                            </small>
+                          ) : null}
+                        </figcaption>
+                      </figure>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
 
             {closed ? (
               <div
