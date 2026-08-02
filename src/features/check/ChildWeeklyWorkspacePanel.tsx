@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type MouseEvent } from "react";
 import { getCurrentUser } from "aws-amplify/auth";
 import { generateClient } from "aws-amplify/data";
+import { getUrl } from "aws-amplify/storage";
 import type { Schema } from "../../../amplify/data/resource";
 import {
   aggregateChildWeeklyRecord,
@@ -48,11 +49,14 @@ import type {
   ClassroomRow,
   ChildRow,
   ChildWeekendLetterDraft,
+  ChildWeeklyPhotoSnapshot,
   ChildWeeklyRecordSummary,
   ChildWeeklyReportRow,
   ChildWeeklyWorkflowEntry,
   GenerateChildWeekendLetterResponse,
   ObservationReportSourceData,
+  PhotoAttachmentRow,
+  PhotoChildLinkSnapshot,
   WeekendPlayCandidate,
 } from "./types";
 
@@ -75,15 +79,26 @@ type DataResult<T> = Promise<{
   errors?: ReadonlyArray<DataError> | null;
 }>;
 
+type ListDataResult<T> = Promise<{
+  data?: T[] | null;
+  nextToken?: string | null;
+  errors?: ReadonlyArray<DataError> | null;
+}>;
+
 type ChildWeeklyReportModel = {
   get: (input: { id: string }) => DataResult<ChildWeeklyReportRow>;
   create: (input: Record<string, unknown>) => DataResult<ChildWeeklyReportRow>;
   update: (input: Record<string, unknown> & { id: string }) => DataResult<ChildWeeklyReportRow>;
 };
 
+type PhotoAttachmentModel = {
+  list: (input?: Record<string, unknown>) => ListDataResult<PhotoAttachmentRow>;
+};
+
 type ChildWeekendLetterApi = {
   models: {
     ChildWeeklyReport: ChildWeeklyReportModel;
+    PhotoAttachment: PhotoAttachmentModel;
   };
   mutations: {
     generateChildWeekendLetter: (input: { childWeeklyReportId: string }) =>
@@ -147,6 +162,132 @@ function aiStatusClass(value: unknown): string {
   return "";
 }
 
+const MAX_WEEKLY_PHOTOS = 3;
+
+type PhotoPreview = {
+  storagePath: string;
+  title: string;
+  caption: string;
+};
+
+async function listAll<T>(
+  listFn: (input?: Record<string, unknown>) => ListDataResult<T>,
+  input?: Record<string, unknown>,
+): Promise<T[]> {
+  const rows: T[] = [];
+  let nextToken: string | null | undefined = undefined;
+
+  do {
+    const result = await listFn({
+      ...(input ?? {}),
+      limit: 1000,
+      nextToken,
+    });
+    if (result.errors?.length) {
+      throw new Error(resultErrorText(result.errors, "写真候補の一覧取得に失敗しました。"));
+    }
+    rows.push(...(result.data ?? []));
+    nextToken = result.nextToken ?? null;
+  } while (nextToken);
+
+  return rows;
+}
+
+function parsePhotoChildLinks(value: unknown): PhotoChildLinkSnapshot[] {
+  const text = s(value);
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item): PhotoChildLinkSnapshot | null => {
+        if (!item || typeof item !== "object") return null;
+        const row = item as Record<string, unknown>;
+        const childId = s(row.childId);
+        const childNameSnapshot = s(row.childNameSnapshot);
+        if (!childId || !childNameSnapshot) return null;
+        const sortOrder = Number(row.sortOrder);
+        return {
+          childId,
+          childNameSnapshot,
+          observationRecordId: s(row.observationRecordId),
+          sortOrder: Number.isFinite(sortOrder) && sortOrder > 0 ? sortOrder : 1,
+        };
+      })
+      .filter((item): item is PhotoChildLinkSnapshot => Boolean(item))
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+  } catch {
+    return [];
+  }
+}
+
+function parseChildWeeklyPhotoSnapshots(value: unknown): ChildWeeklyPhotoSnapshot[] {
+  const text = s(value);
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item): ChildWeeklyPhotoSnapshot | null => {
+        if (!item || typeof item !== "object") return null;
+        const row = item as Record<string, unknown>;
+        const photoAttachmentId = s(row.photoAttachmentId);
+        const storagePath = s(row.storagePath);
+        if (!photoAttachmentId || !storagePath) return null;
+        const sortOrder = Number(row.sortOrder);
+        return {
+          photoAttachmentId,
+          storagePath,
+          caption: s(row.caption),
+          takenAt: s(row.takenAt),
+          targetDate: s(row.targetDate),
+          sortOrder: Number.isFinite(sortOrder) && sortOrder > 0 ? sortOrder : 1,
+        };
+      })
+      .filter((item): item is ChildWeeklyPhotoSnapshot => Boolean(item))
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .slice(0, MAX_WEEKLY_PHOTOS)
+      .map((item, index) => ({ ...item, sortOrder: index + 1 }));
+  } catch {
+    return [];
+  }
+}
+
+function buildChildWeeklyPhotoSnapshot(
+  photo: PhotoAttachmentRow,
+  sortOrder: number,
+): ChildWeeklyPhotoSnapshot {
+  return {
+    photoAttachmentId: s(photo.id),
+    storagePath: s(photo.storagePath),
+    caption: s(photo.caption),
+    takenAt: s(photo.takenAt),
+    targetDate: s(photo.targetDate),
+    sortOrder,
+  };
+}
+
+function normalizePhotoSnapshots(
+  rows: ChildWeeklyPhotoSnapshot[],
+): ChildWeeklyPhotoSnapshot[] {
+  return rows
+    .filter((row) => Boolean(s(row.photoAttachmentId) && s(row.storagePath)))
+    .slice(0, MAX_WEEKLY_PHOTOS)
+    .map((row, index) => ({ ...row, sortOrder: index + 1 }));
+}
+
+function photoSnapshotJson(rows: ChildWeeklyPhotoSnapshot[]): string {
+  return JSON.stringify(normalizePhotoSnapshots(rows));
+}
+
+function photoSnapshotTitle(row: ChildWeeklyPhotoSnapshot): string {
+  return row.targetDate ? formatDateLabel(row.targetDate, false) : "掲載写真";
+}
+
 export default function ChildWeeklyWorkspacePanel(props: Props) {
   const {
     owner,
@@ -188,6 +329,14 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
   const [selectedWeekendPlayId, setSelectedWeekendPlayId] = useState("");
   const [weeklyReport, setWeeklyReport] = useState<ChildWeeklyReportRow | null>(null);
   const [letterDraft, setLetterDraft] = useState<ChildWeekendLetterDraft>(() => emptyChildWeekendLetterDraft());
+  const [photoCandidates, setPhotoCandidates] = useState<PhotoAttachmentRow[]>([]);
+  const [selectedPhotoSnapshots, setSelectedPhotoSnapshots] = useState<ChildWeeklyPhotoSnapshot[]>([]);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [loadingPhotos, setLoadingPhotos] = useState(false);
+  const [photoCandidatesLoaded, setPhotoCandidatesLoaded] = useState(false);
+  const [photoLoadError, setPhotoLoadError] = useState("");
+  const [photoMessage, setPhotoMessage] = useState("");
+  const [expandedPhoto, setExpandedPhoto] = useState<PhotoPreview | null>(null);
   const [loadingLetter, setLoadingLetter] = useState(false);
   const [generatingLetter, setGeneratingLetter] = useState(false);
   const [savingLetter, setSavingLetter] = useState(false);
@@ -273,6 +422,40 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
     : letterInputStale ? "STALE" : weeklyReport?.aiStatus;
   const reportEditable = canEditChildWeeklyReport(weeklyReport);
   const reviewer = canReviewChildWeeklyReport(ownerRole);
+  const finalPhotoSnapshots = useMemo(
+    () => parseChildWeeklyPhotoSnapshots(weeklyReport?.finalPhotoSnapshotJson),
+    [weeklyReport?.finalPhotoSnapshotJson],
+  );
+  const selectedPhotoSnapshotJson = useMemo(
+    () => photoSnapshotJson(selectedPhotoSnapshots),
+    [selectedPhotoSnapshots],
+  );
+  const savedSelectedPhotoSnapshotJson = useMemo(
+    () => photoSnapshotJson(parseChildWeeklyPhotoSnapshots(weeklyReport?.selectedPhotoSnapshotJson)),
+    [weeklyReport?.selectedPhotoSnapshotJson],
+  );
+  const photoSelectionDirty = reportEditable
+    && selectedPhotoSnapshotJson !== savedSelectedPhotoSnapshotJson;
+  const photoCandidateById = useMemo(
+    () => new Map(
+      photoCandidates
+        .filter((row) => Boolean(s(row.id)))
+        .map((row) => [s(row.id), row] as const),
+    ),
+    [photoCandidates],
+  );
+  const invalidSelectedPhotoSnapshots = useMemo(() => {
+    if (!photoCandidatesLoaded) return [];
+    return selectedPhotoSnapshots.filter((snapshot) => {
+      const candidate = photoCandidateById.get(snapshot.photoAttachmentId);
+      return !candidate || s(candidate.storagePath) !== snapshot.storagePath;
+    });
+  }, [photoCandidateById, photoCandidatesLoaded, selectedPhotoSnapshots]);
+  const photoSelectionStale = reportStatus === "COMPLETED"
+    && invalidSelectedPhotoSnapshots.length > 0;
+  const photoValidationPending = reportStatus === "COMPLETED"
+    && selectedPhotoSnapshots.length > 0
+    && (loadingPhotos || !photoCandidatesLoaded || Boolean(photoLoadError));
   const normalizedOwnerRole = s(ownerRole).toUpperCase();
   const workflowHistory = useMemo<ChildWeeklyWorkflowEntry[]>(
     () => parseChildWeeklyWorkflowHistory(weeklyReport?.reviewHistoryJson),
@@ -384,11 +567,124 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
   }, [weekendPlayCandidates]);
 
   useEffect(() => {
+    if (!childContext?.classroomId || !childContext.childId) {
+      setPhotoCandidates([]);
+      setPhotoCandidatesLoaded(false);
+      setPhotoLoadError("");
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingPhotos(true);
+    setPhotoCandidatesLoaded(false);
+    setPhotoLoadError("");
+
+    void listAll<PhotoAttachmentRow>(letterApi.models.PhotoAttachment.list, {
+      filter: {
+        tenantId: { eq: tenantId },
+        classroomId: { eq: s(childContext.classroomId) },
+      },
+    })
+      .then((rows) => {
+        if (cancelled) return;
+        const candidates = rows
+          .filter((row) => s(row.status).toUpperCase() === "ACTIVE")
+          .filter((row) => s(row.parentVisibility).toUpperCase() === "ELIGIBLE")
+          .filter((row) => {
+            const targetDate = s(row.targetDate);
+            return targetDate >= childContext.periodStart && targetDate <= childContext.periodEnd;
+          })
+          .filter((row) => parsePhotoChildLinks(row.childLinksJson)
+            .some((link) => link.childId === childContext.childId))
+          .filter((row) => Boolean(s(row.id) && s(row.storagePath)))
+          .sort((a, b) => (
+            s(a.targetDate).localeCompare(s(b.targetDate))
+            || s(a.takenAt || a.createdAt).localeCompare(s(b.takenAt || b.createdAt))
+            || s(a.id).localeCompare(s(b.id))
+          ));
+        setPhotoCandidates(candidates);
+        setPhotoCandidatesLoaded(true);
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        console.error(cause);
+        setPhotoCandidates([]);
+        setPhotoCandidatesLoaded(false);
+        setPhotoLoadError(`写真候補の読み込みエラー: ${cause instanceof Error ? cause.message : String(cause)}`);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPhotos(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [childContext, letterApi, tenantId]);
+
+  useEffect(() => {
+    if (!reportEditable || !photoCandidatesLoaded) return;
+    setSelectedPhotoSnapshots((current) => {
+      const next = normalizePhotoSnapshots(current.map((snapshot) => {
+        const candidate = photoCandidateById.get(snapshot.photoAttachmentId);
+        return candidate
+          ? buildChildWeeklyPhotoSnapshot(candidate, snapshot.sortOrder)
+          : snapshot;
+      }));
+      return photoSnapshotJson(next) === photoSnapshotJson(current) ? current : next;
+    });
+  }, [photoCandidateById, photoCandidatesLoaded, reportEditable]);
+
+  const photoStoragePaths = useMemo(() => Array.from(new Set([
+    ...photoCandidates.map((row) => s(row.storagePath)),
+    ...selectedPhotoSnapshots.map((row) => row.storagePath),
+    ...finalPhotoSnapshots.map((row) => row.storagePath),
+  ].filter(Boolean))), [finalPhotoSnapshots, photoCandidates, selectedPhotoSnapshots]);
+
+  useEffect(() => {
+    if (photoStoragePaths.length === 0) return;
+    let cancelled = false;
+
+    void Promise.all(photoStoragePaths.map(async (path) => {
+      try {
+        const result = await getUrl({
+          path,
+          options: {
+            expiresIn: 60 * 60,
+            validateObjectExistence: true,
+          },
+        });
+        return [path, String(result.url)] as const;
+      } catch (cause) {
+        console.warn("週末こどもだより写真URLの取得に失敗しました。", path, cause);
+        return [path, ""] as const;
+      }
+    })).then((entries) => {
+      if (cancelled) return;
+      setPhotoUrls((current) => ({ ...current, ...Object.fromEntries(entries) }));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [photoStoragePaths]);
+
+  useEffect(() => {
+    if (!expandedPhoto) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpandedPhoto(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [expandedPhoto]);
+
+  useEffect(() => {
     if (!currentWeeklyReportId) {
       setWeeklyReport(null);
       setLetterDraft(emptyChildWeekendLetterDraft());
+      setSelectedPhotoSnapshots([]);
       setWorkflowComment("");
       setLetterMessage("");
+      setPhotoMessage("");
       return;
     }
 
@@ -405,7 +701,9 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
         const report = result.data ?? null;
         setWeeklyReport(report);
         setLetterDraft(letterDraftFromReport(report));
+        setSelectedPhotoSnapshots(parseChildWeeklyPhotoSnapshots(report?.selectedPhotoSnapshotJson));
         setWorkflowComment("");
+        setPhotoMessage("");
 
         const savedPlayId = parseSelectedWeekendPlayId(report?.selectedWeekendPlayJson);
         if (savedPlayId && weekendPlayCandidates.some((candidate) => candidate.playId === savedPlayId)) {
@@ -417,6 +715,7 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
         console.error(cause);
         setWeeklyReport(null);
         setLetterDraft(emptyChildWeekendLetterDraft());
+        setSelectedPhotoSnapshots([]);
         setLetterMessage(`下書き取得エラー: ${cause instanceof Error ? cause.message : String(cause)}`);
       })
       .finally(() => {
@@ -437,6 +736,7 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
     const report = result.data ?? null;
     setWeeklyReport(report);
     setLetterDraft(letterDraftFromReport(report));
+    setSelectedPhotoSnapshots(parseChildWeeklyPhotoSnapshots(report?.selectedPhotoSnapshotJson));
     return report;
   }
 
@@ -463,6 +763,7 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
       selectedWeekendPlayJson,
       sourceObservationIdsJson: JSON.stringify(letterSourceSnapshot.episodes.map((episode) => episode.observationId)),
       sourceAbilityCodesJson: JSON.stringify(letterSourceSnapshot.abilities.map((ability) => ability.abilityCode)),
+      selectedPhotoSnapshotJson,
       aiStatus,
       promptVersion: letterSourceSnapshot.promptVersion,
       generationErrorMessage: "",
@@ -529,13 +830,16 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
         comparisonText: letterDraft.comparisonText,
         weekendPlayText: letterDraft.weekendPlayText,
         parentLetterText: letterPreviewText,
+        selectedPhotoSnapshotJson,
         updatedByUserId: owner,
       });
       if (result.errors?.length || !result.data) {
         throw new Error(resultErrorText(result.errors, "編集した下書きの保存に失敗しました。"));
       }
       setWeeklyReport(result.data);
-      setLetterMessage("編集した週末こどもだより下書きを保存しました。");
+      setSelectedPhotoSnapshots(parseChildWeeklyPhotoSnapshots(result.data.selectedPhotoSnapshotJson));
+      setLetterMessage("編集した週末こどもだより下書きと掲載写真を保存しました。");
+      setPhotoMessage("");
     } catch (cause) {
       console.error(cause);
       setLetterMessage(`下書き保存エラー: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -588,6 +892,8 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
         reviewHistoryJson: appendChildWeeklyWorkflowEntry(weeklyReport.reviewHistoryJson, entry),
         deliveryStatus: "NOT_READY",
         finalParentLetterText: "",
+        selectedPhotoSnapshotJson,
+        finalPhotoSnapshotJson: "",
         updatedByUserId: owner,
       });
       if (result.errors?.length || !result.data) {
@@ -595,7 +901,9 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
       }
       setWeeklyReport(result.data);
       setLetterDraft(letterDraftFromReport(result.data));
+      setSelectedPhotoSnapshots(parseChildWeeklyPhotoSnapshots(result.data.selectedPhotoSnapshotJson));
       setWorkflowComment("");
+      setPhotoMessage("");
       setLetterMessage("週末こどもだよりを記録完了にしました。園長・主任の確認待ちです。");
     } catch (cause) {
       console.error(cause);
@@ -622,6 +930,14 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
       setLetterMessage("保護者向け最終文が空のため確認できません。");
       return;
     }
+    if (photoValidationPending) {
+      setLetterMessage("選択写真の有効性を確認できません。写真候補の読み込み完了後に再度確認してください。");
+      return;
+    }
+    if (photoSelectionStale) {
+      setLetterMessage("記録完了後に選択写真の状態が変わっています。差し戻して写真を再選択してください。");
+      return;
+    }
 
     setWorkflowWorking(true);
     setLetterMessage("");
@@ -645,6 +961,7 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
         reviewHistoryJson: appendChildWeeklyWorkflowEntry(weeklyReport.reviewHistoryJson, entry),
         deliveryStatus: "READY",
         finalParentLetterText: letterPreviewText,
+        finalPhotoSnapshotJson: selectedPhotoSnapshotJson,
         deliveryPreparedByUserId: owner,
         deliveryPreparedByName: s(ownerName) || owner,
         deliveryPreparedAt: nowIso,
@@ -697,6 +1014,7 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
         reviewHistoryJson: appendChildWeeklyWorkflowEntry(weeklyReport.reviewHistoryJson, entry),
         deliveryStatus: "NOT_READY",
         finalParentLetterText: "",
+        finalPhotoSnapshotJson: "",
         updatedByUserId: owner,
       });
       if (result.errors?.length || !result.data) {
@@ -712,6 +1030,46 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
     } finally {
       setWorkflowWorking(false);
     }
+  }
+
+  function handleTogglePhoto(photo: PhotoAttachmentRow) {
+    if (!reportEditable) return;
+    const photoId = s(photo.id);
+    const storagePath = s(photo.storagePath);
+    if (!photoId || !storagePath) return;
+
+    const existingIndex = selectedPhotoSnapshots.findIndex(
+      (row) => row.photoAttachmentId === photoId,
+    );
+    if (existingIndex >= 0) {
+      setSelectedPhotoSnapshots((current) => normalizePhotoSnapshots(
+        current.filter((row) => row.photoAttachmentId !== photoId),
+      ));
+      setPhotoMessage("掲載写真の選択を解除しました。編集内容の保存または記録完了で確定します。");
+      return;
+    }
+
+    if (selectedPhotoSnapshots.length >= MAX_WEEKLY_PHOTOS) {
+      setPhotoMessage(`掲載写真は最大${MAX_WEEKLY_PHOTOS}枚です。選択中の写真を解除してから追加してください。`);
+      return;
+    }
+
+    setSelectedPhotoSnapshots((current) => normalizePhotoSnapshots([
+      ...current,
+      buildChildWeeklyPhotoSnapshot(photo, current.length + 1),
+    ]));
+    setPhotoMessage("掲載写真を選択しました。選択した順に1～3番で表示します。");
+  }
+
+  function handleRemoveInvalidPhotoSelections() {
+    if (!reportEditable || !photoCandidatesLoaded) return;
+    setSelectedPhotoSnapshots((current) => normalizePhotoSnapshots(
+      current.filter((snapshot) => {
+        const candidate = photoCandidateById.get(snapshot.photoAttachmentId);
+        return Boolean(candidate && s(candidate.storagePath) === snapshot.storagePath);
+      }),
+    ));
+    setPhotoMessage("現在の公開候補から外れた写真を選択から解除しました。");
   }
 
   function updateLetterDraft(
@@ -1011,6 +1369,209 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
             )}
           </section>
 
+          <section className="check-card child-weekly-photo-card">
+            <div className="check-card-header">
+              <h3>週末こどもだより掲載写真</h3>
+              <span>
+                {reportStatus === "CONFIRMED"
+                  ? `最終版 ${finalPhotoSnapshots.length}枚`
+                  : `候補 ${photoCandidates.length}枚 / 選択 ${selectedPhotoSnapshots.length}/${MAX_WEEKLY_PHOTOS}枚`}
+              </span>
+            </div>
+            <p className="muted">
+              日報で「週末こどもだよりの候補」にした写真のうち、対象児童・対象週に一致する写真を0～3枚選択します。写真はClaudeの文章生成には使用しません。
+            </p>
+
+            {photoLoadError && reportStatus !== "CONFIRMED" ? <p className="error-box">{photoLoadError}</p> : null}
+            {photoMessage ? (
+              <p className={photoMessage.includes("最大") || photoMessage.includes("できません") ? "error-box" : "success-box"}>
+                {photoMessage}
+              </p>
+            ) : null}
+
+            {reportStatus === "CONFIRMED" ? (
+              finalPhotoSnapshots.length > 0 ? (
+                <div className="child-weekly-photo-final-grid">
+                  {finalPhotoSnapshots.map((snapshot) => {
+                    const imageUrl = photoUrls[snapshot.storagePath];
+                    return (
+                      <article className="child-weekly-photo-final-item" key={snapshot.photoAttachmentId}>
+                        <button
+                          type="button"
+                          className="child-weekly-photo-image-button"
+                          disabled={!imageUrl}
+                          onClick={() => imageUrl && setExpandedPhoto({
+                            storagePath: snapshot.storagePath,
+                            title: photoSnapshotTitle(snapshot),
+                            caption: snapshot.caption,
+                          })}
+                        >
+                          {imageUrl ? (
+                            <img className="child-weekly-photo-image" src={imageUrl} alt={snapshot.caption || "週末こどもだより掲載写真"} />
+                          ) : (
+                            <span className="child-weekly-photo-placeholder">画像を読み込めません</span>
+                          )}
+                          <span className="child-weekly-photo-order">{snapshot.sortOrder}</span>
+                        </button>
+                        <div className="child-weekly-photo-meta">
+                          <strong>{photoSnapshotTitle(snapshot)}</strong>
+                          <span>確認時点の最終写真</span>
+                        </div>
+                        {snapshot.caption ? <p className="child-weekly-photo-caption">{snapshot.caption}</p> : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="check-empty-card">
+                  <strong>この週末こどもだよりは写真なしで確認されています。</strong>
+                  <span>写真は任意のため、文章だけでも発信できます。</span>
+                </div>
+              )
+            ) : reportStatus === "COMPLETED" ? (
+              <>
+                {selectedPhotoSnapshots.length > 0 ? (
+                  <div className="child-weekly-photo-final-grid">
+                    {selectedPhotoSnapshots.map((snapshot) => {
+                      const imageUrl = photoUrls[snapshot.storagePath];
+                      const invalid = invalidSelectedPhotoSnapshots.some(
+                        (row) => row.photoAttachmentId === snapshot.photoAttachmentId,
+                      );
+                      return (
+                        <article
+                          className={invalid
+                            ? "child-weekly-photo-final-item child-weekly-photo-final-item-invalid"
+                            : "child-weekly-photo-final-item"}
+                          key={snapshot.photoAttachmentId}
+                        >
+                          <button
+                            type="button"
+                            className="child-weekly-photo-image-button"
+                            disabled={!imageUrl}
+                            onClick={() => imageUrl && setExpandedPhoto({
+                              storagePath: snapshot.storagePath,
+                              title: photoSnapshotTitle(snapshot),
+                              caption: snapshot.caption,
+                            })}
+                          >
+                            {imageUrl ? (
+                              <img className="child-weekly-photo-image" src={imageUrl} alt={snapshot.caption || "記録完了時の選択写真"} />
+                            ) : (
+                              <span className="child-weekly-photo-placeholder">画像を読み込めません</span>
+                            )}
+                            <span className="child-weekly-photo-order">{snapshot.sortOrder}</span>
+                          </button>
+                          <div className="child-weekly-photo-meta">
+                            <strong>{photoSnapshotTitle(snapshot)}</strong>
+                            <span>{invalid ? "現在は公開候補外" : "記録完了時の選択"}</span>
+                          </div>
+                          {snapshot.caption ? <p className="child-weekly-photo-caption">{snapshot.caption}</p> : null}
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="check-empty-card">
+                    <strong>写真なしで記録完了しています。</strong>
+                    <span>園長・主任は文章のみの週末こどもだよりとして確認できます。</span>
+                  </div>
+                )}
+                {photoValidationPending ? (
+                  <p className="child-weekly-photo-stale-note">
+                    選択写真の状態を確認しています。読み込みが完了するまで確認操作はできません。
+                  </p>
+                ) : null}
+                {photoSelectionStale ? (
+                  <p className="child-weekly-photo-stale-note">
+                    記録完了後に選択写真がアーカイブされたか、週末だより候補・児童との紐付けから外れました。園長・主任は差し戻し、担任が写真を再選択してください。
+                  </p>
+                ) : null}
+                <p className="child-weekly-photo-locked-note">記録完了後は写真選択を固定しています。修正は差し戻し後に行います。</p>
+              </>
+            ) : loadingPhotos ? (
+              <p className="muted">対象週の写真候補を読み込んでいます...</p>
+            ) : photoCandidates.length > 0 ? (
+              <>
+                <div className="child-weekly-photo-summary">
+                  <span>選択した順番が保護者向けの表示順になります。</span>
+                  <strong>{selectedPhotoSnapshots.length}/{MAX_WEEKLY_PHOTOS}枚選択</strong>
+                  {photoSelectionDirty ? <em>未保存の写真変更があります</em> : null}
+                </div>
+                <div className="child-weekly-photo-grid">
+                  {photoCandidates.map((photo) => {
+                    const photoId = s(photo.id);
+                    const storagePath = s(photo.storagePath);
+                    const selectedIndex = selectedPhotoSnapshots.findIndex(
+                      (row) => row.photoAttachmentId === photoId,
+                    );
+                    const selected = selectedIndex >= 0;
+                    const imageUrl = photoUrls[storagePath];
+                    const selectionDisabled = !reportEditable
+                      || (!selected && selectedPhotoSnapshots.length >= MAX_WEEKLY_PHOTOS);
+                    return (
+                      <article
+                        className={selected
+                          ? "child-weekly-photo-option child-weekly-photo-option-selected"
+                          : "child-weekly-photo-option"}
+                        key={photoId}
+                      >
+                        <button
+                          type="button"
+                          className="child-weekly-photo-image-button"
+                          disabled={!imageUrl}
+                          onClick={() => imageUrl && setExpandedPhoto({
+                            storagePath,
+                            title: `${formatDateLabel(s(photo.targetDate), false)} ${s(photo.practiceName) || "活動写真"}`,
+                            caption: s(photo.caption),
+                          })}
+                        >
+                          {imageUrl ? (
+                            <img className="child-weekly-photo-image" src={imageUrl} alt={s(photo.caption) || s(photo.practiceName) || "活動写真"} />
+                          ) : (
+                            <span className="child-weekly-photo-placeholder">画像を読み込めません</span>
+                          )}
+                          {selected ? <span className="child-weekly-photo-order">{selectedIndex + 1}</span> : null}
+                        </button>
+                        <div className="child-weekly-photo-meta">
+                          <strong>{formatDateLabel(s(photo.targetDate), false)}</strong>
+                          <span>{practiceRoleLabel(s(photo.practiceRole))} / {s(photo.practiceName) || s(photo.practiceCode)}</span>
+                        </div>
+                        {s(photo.caption) ? <p className="child-weekly-photo-caption">{s(photo.caption)}</p> : <p className="child-weekly-photo-caption muted">写真の説明なし</p>}
+                        <div className="child-weekly-photo-actions">
+                          <button
+                            type="button"
+                            className={selected ? "danger-button" : "secondary-button"}
+                            disabled={selectionDisabled}
+                            onClick={() => handleTogglePhoto(photo)}
+                          >
+                            {selected ? `選択${selectedIndex + 1}を解除` : "掲載写真に選択"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                <p className="child-weekly-photo-note">
+                  写真は任意です。選択なしでも記録完了できます。選択内容は「編集内容を保存」または「記録を完了」で保存されます。
+                </p>
+              </>
+            ) : (
+              <div className="check-empty-card">
+                <strong>この子ども・対象週の写真候補はありません。</strong>
+                <span>日報の活動写真で対象児童を選び、「週末こどもだよりの候補にする」を指定すると表示されます。</span>
+              </div>
+            )}
+
+            {reportEditable && photoCandidatesLoaded && invalidSelectedPhotoSnapshots.length > 0 ? (
+              <div className="child-weekly-photo-invalid-action">
+                <span>保存済みの選択に、現在の候補から外れた写真があります。</span>
+                <button type="button" className="danger-button" onClick={handleRemoveInvalidPhotoSelections}>
+                  候補外の写真を選択解除
+                </button>
+              </div>
+            ) : null}
+          </section>
+
           <section className="check-card child-weekly-ai-letter-card">
             <div className="check-card-header">
               <h3>Claudeによる週末こどもだより下書き</h3>
@@ -1158,7 +1719,7 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
                 {completionMissing.length > 0 ? (
                   <ul>{completionMissing.map((item) => <li key={item}>{item}</li>)}</ul>
                 ) : (
-                  <p>Claude下書き、選択した遊び、保護者向け文章を確認できます。記録完了に進めます。</p>
+                  <p>Claude下書き、選択した遊び、保護者向け文章、掲載写真を確認できます。写真なしでも記録完了に進めます。</p>
                 )}
               </div>
             ) : null}
@@ -1193,7 +1754,7 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
                 <>
                   <button
                     type="button"
-                    disabled={workflowWorking || letterInputStale}
+                    disabled={workflowWorking || letterInputStale || photoSelectionStale || photoValidationPending}
                     onClick={() => void handleConfirmReport()}
                   >
                     {workflowWorking ? "処理中..." : "確認して発信準備を完了"}
@@ -1262,6 +1823,35 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
                   <span className="check-status-pill check-status-ok">発信準備完了</span>
                 </div>
                 <pre>{s(weeklyReport?.finalParentLetterText)}</pre>
+                {finalPhotoSnapshots.length > 0 ? (
+                  <div className="child-weekly-photo-final-grid child-weekly-photo-delivery-grid">
+                    {finalPhotoSnapshots.map((snapshot) => {
+                      const imageUrl = photoUrls[snapshot.storagePath];
+                      return (
+                        <article className="child-weekly-photo-final-item" key={`delivery-${snapshot.photoAttachmentId}`}>
+                          <button
+                            type="button"
+                            className="child-weekly-photo-image-button"
+                            disabled={!imageUrl}
+                            onClick={() => imageUrl && setExpandedPhoto({
+                              storagePath: snapshot.storagePath,
+                              title: photoSnapshotTitle(snapshot),
+                              caption: snapshot.caption,
+                            })}
+                          >
+                            {imageUrl ? (
+                              <img className="child-weekly-photo-image" src={imageUrl} alt={snapshot.caption || "保護者向け最終写真"} />
+                            ) : (
+                              <span className="child-weekly-photo-placeholder">画像を読み込めません</span>
+                            )}
+                            <span className="child-weekly-photo-order">{snapshot.sortOrder}</span>
+                          </button>
+                          {snapshot.caption ? <p className="child-weekly-photo-caption">{snapshot.caption}</p> : null}
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : null}
                 <small>
                   準備者 {s(weeklyReport?.deliveryPreparedByName) || s(weeklyReport?.deliveryPreparedByUserId)} / {formatWorkflowTimestamp(weeklyReport?.deliveryPreparedAt)}
                 </small>
@@ -1345,6 +1935,31 @@ export default function ChildWeeklyWorkspacePanel(props: Props) {
             </details>
           ) : null}
         </>
+      ) : null}
+
+      {expandedPhoto ? (
+        <div
+          className="child-weekly-photo-dialog-backdrop"
+          role="presentation"
+          onMouseDown={(event: MouseEvent<HTMLDivElement>) => {
+            if (event.currentTarget === event.target) setExpandedPhoto(null);
+          }}
+        >
+          <div className="child-weekly-photo-dialog" role="dialog" aria-modal="true" aria-label="掲載写真の拡大表示">
+            <div className="child-weekly-photo-dialog-header">
+              <div>
+                <strong>{expandedPhoto.title}</strong>
+                {expandedPhoto.caption ? <span>{expandedPhoto.caption}</span> : null}
+              </div>
+              <button type="button" className="secondary-button" onClick={() => setExpandedPhoto(null)}>閉じる</button>
+            </div>
+            <img
+              className="child-weekly-photo-dialog-image"
+              src={photoUrls[expandedPhoto.storagePath]}
+              alt={expandedPhoto.caption || expandedPhoto.title}
+            />
+          </div>
+        </div>
       ) : null}
     </div>
   );

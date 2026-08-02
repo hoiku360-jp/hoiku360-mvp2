@@ -493,6 +493,57 @@ export type ChildWeekendLetterDraft = {
 };
 
 
+export type PhotoChildLinkSnapshot = {
+  childId: string;
+  childNameSnapshot: string;
+  observationRecordId: string;
+  sortOrder: number;
+};
+
+export type PhotoAttachmentRow = {
+  id?: string | null;
+  tenantId?: string | null;
+  fiscalYear?: number | null;
+  classroomId?: string | null;
+  targetDate?: string | null;
+  dailyPlanId?: string | null;
+  dailyReportId?: string | null;
+  dailyPracticeRecordId?: string | null;
+  practiceRole?: string | null;
+  practiceCode?: string | null;
+  practiceName?: string | null;
+  storagePath?: string | null;
+  contentType?: string | null;
+  fileSize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  childLinksJson?: string | null;
+  caption?: string | null;
+  takenAt?: string | null;
+  parentVisibility?: string | null;
+  status?: string | null;
+  uploadErrorMessage?: string | null;
+  uploadedAt?: string | null;
+  uploadedByUserId?: string | null;
+  uploadedByName?: string | null;
+  archivedAt?: string | null;
+  archivedByUserId?: string | null;
+  createdByUserId?: string | null;
+  updatedByUserId?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type ChildWeeklyPhotoSnapshot = {
+  photoAttachmentId: string;
+  storagePath: string;
+  caption: string;
+  takenAt: string;
+  targetDate: string;
+  sortOrder: number;
+};
+
+
 export type ChildWeeklyWorkflowAction =
   | "COMPLETE"
   | "CONFIRM"
@@ -547,6 +598,8 @@ export type ChildWeeklyReportRow = {
   reviewHistoryJson?: string | null;
   deliveryStatus?: string | null;
   finalParentLetterText?: string | null;
+  selectedPhotoSnapshotJson?: string | null;
+  finalPhotoSnapshotJson?: string | null;
   deliveryPreparedByUserId?: string | null;
   deliveryPreparedByName?: string | null;
   deliveryPreparedAt?: string | null;
