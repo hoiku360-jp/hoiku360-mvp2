@@ -105,7 +105,9 @@ export const generateChildWeekendLetterFn = defineFunction({
   memoryMB: 1024,
   runtime: 22,
   environment: {
-    BEDROCK_MODEL_ID: "jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    // Phase Haiku trial: only the child weekend letter uses Claude Haiku 4.5.
+    // Other reasoning-heavy AI functions remain on Claude Sonnet 4.5.
+    BEDROCK_MODEL_ID: "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
   },
 });
 
