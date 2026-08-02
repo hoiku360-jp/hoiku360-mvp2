@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { generateClient } from "aws-amplify/data";
+import { getUrl, uploadData } from "aws-amplify/storage";
 import type { Schema } from "../../../amplify/data/resource";
 
 type Props = {
@@ -143,6 +144,77 @@ type DailyPracticeRecordModelClient = {
   update: (
     input: Record<string, unknown> & { id: string },
   ) => Promise<OperationResult<DailyPracticeRecordRow>>;
+};
+
+type ChildRow = {
+  id?: string | null;
+  tenantId?: string | null;
+  displayName?: string | null;
+  kana?: string | null;
+  status?: string | null;
+};
+
+type ChildClassroomEnrollmentRow = {
+  id?: string | null;
+  tenantId?: string | null;
+  childId?: string | null;
+  classroomId?: string | null;
+  fiscalYear?: number | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  status?: string | null;
+};
+
+type PhotoAttachmentRow = {
+  id?: string | null;
+  tenantId?: string | null;
+  fiscalYear?: number | null;
+  classroomId?: string | null;
+  targetDate?: string | null;
+  dailyPlanId?: string | null;
+  dailyReportId?: string | null;
+  dailyPracticeRecordId?: string | null;
+  practiceRole?: string | null;
+  practiceCode?: string | null;
+  practiceName?: string | null;
+  storagePath?: string | null;
+  contentType?: string | null;
+  fileSize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  childLinksJson?: string | null;
+  caption?: string | null;
+  takenAt?: string | null;
+  parentVisibility?: string | null;
+  status?: string | null;
+  uploadErrorMessage?: string | null;
+  uploadedAt?: string | null;
+  uploadedByUserId?: string | null;
+  uploadedByName?: string | null;
+  archivedAt?: string | null;
+  archivedByUserId?: string | null;
+  createdByUserId?: string | null;
+  updatedByUserId?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+type ChildModelClient = {
+  get: (input: { id: string }) => Promise<OperationResult<ChildRow>>;
+};
+
+type ChildClassroomEnrollmentModelClient = {
+  list: (
+    input?: Record<string, unknown>,
+  ) => Promise<ListResult<ChildClassroomEnrollmentRow>>;
+};
+
+type PhotoAttachmentModelClient = {
+  list: (input?: Record<string, unknown>) => Promise<ListResult<PhotoAttachmentRow>>;
+  create: (input: Record<string, unknown>) => Promise<OperationResult<PhotoAttachmentRow>>;
+  update: (
+    input: Record<string, unknown> & { id: string },
+  ) => Promise<OperationResult<PhotoAttachmentRow>>;
 };
 
 type ObservationRecordRow = {
@@ -310,7 +382,59 @@ type PracticeDraft = {
 
 type PracticeDraftState = Record<PracticeRole, PracticeDraft>;
 
+type PhotoChildLinkSnapshot = {
+  childId: string;
+  childNameSnapshot: string;
+  observationRecordId: string;
+  sortOrder: number;
+};
+
+type PhotoParentVisibility = "PRIVATE" | "ELIGIBLE";
+
+type PhotoDraft = {
+  file: File | null;
+  previewUrl: string;
+  caption: string;
+  selectedChildIds: string[];
+  selectedEpisodeChildId: string;
+  parentVisibility: PhotoParentVisibility;
+  progress: number;
+  inputKey: number;
+};
+
+type PhotoDraftState = Record<PracticeRole, PhotoDraft>;
+
+type ProcessedPhoto = {
+  blob: Blob;
+  width: number;
+  height: number;
+};
+
 const PRACTICE_ROLES: PracticeRole[] = ["PRIMARY", "RESERVE"];
+const MAX_PHOTOS_PER_PRACTICE = 3;
+const MAX_PHOTO_SOURCE_BYTES = 25 * 1024 * 1024;
+const MAX_PHOTO_EDGE = 1600;
+const PHOTO_JPEG_QUALITY = 0.82;
+
+function createEmptyPhotoDraft(): PhotoDraft {
+  return {
+    file: null,
+    previewUrl: "",
+    caption: "",
+    selectedChildIds: [],
+    selectedEpisodeChildId: "",
+    parentVisibility: "PRIVATE",
+    progress: 0,
+    inputKey: 0,
+  };
+}
+
+function createEmptyPhotoDrafts(): PhotoDraftState {
+  return {
+    PRIMARY: createEmptyPhotoDraft(),
+    RESERVE: createEmptyPhotoDraft(),
+  };
+}
 
 function createEmptyPracticeDrafts(): PracticeDraftState {
   const empty = (): PracticeDraft => ({
@@ -809,6 +933,144 @@ function sortNewest<T extends { updatedAt?: string | null; createdAt?: string | 
   );
 }
 
+function parsePhotoChildLinks(value: unknown): PhotoChildLinkSnapshot[] {
+  const text = s(value);
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item): PhotoChildLinkSnapshot | null => {
+        if (!item || typeof item !== "object") return null;
+        const row = item as Record<string, unknown>;
+        const childId = s(row.childId);
+        const childNameSnapshot = s(row.childNameSnapshot);
+        if (!childId || !childNameSnapshot) return null;
+
+        return {
+          childId,
+          childNameSnapshot,
+          observationRecordId: s(row.observationRecordId),
+          sortOrder: Math.max(1, n(row.sortOrder, 1)),
+        };
+      })
+      .filter((item): item is PhotoChildLinkSnapshot => Boolean(item))
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+  } catch {
+    return [];
+  }
+}
+
+function photoStatusLabel(value: unknown): string {
+  switch (s(value).toUpperCase()) {
+    case "ACTIVE":
+      return "保存済み";
+    case "UPLOADING":
+      return "アップロード中";
+    case "ERROR":
+      return "保存エラー";
+    case "ARCHIVED":
+      return "アーカイブ";
+    default:
+      return s(value) || "未保存";
+  }
+}
+
+function photoVisibilityLabel(value: unknown): string {
+  return s(value).toUpperCase() === "ELIGIBLE"
+    ? "週末だより候補"
+    : "日報内のみ";
+}
+
+function formatFileSize(value: unknown): string {
+  const bytes = n(value);
+  if (bytes <= 0) return "-";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function randomPhotoId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `photo-${crypto.randomUUID()}`;
+  }
+
+  return `photo-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function loadImageElement(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("画像を読み込めません。JPEG、PNGまたはiPadで表示可能な写真を選択してください。"));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function looksLikeImageFile(file: File): boolean {
+  const contentType = file.type.toLowerCase();
+  const fileName = file.name.toLowerCase();
+  return (
+    contentType.startsWith("image/") ||
+    /\.(jpe?g|png|webp|heic|heif)$/i.test(fileName)
+  );
+}
+
+async function resizePhoto(file: File): Promise<ProcessedPhoto> {
+  if (!looksLikeImageFile(file)) {
+    throw new Error("画像ファイルを選択してください。");
+  }
+  if (file.size > MAX_PHOTO_SOURCE_BYTES) {
+    throw new Error("元画像は25MB以下にしてください。");
+  }
+
+  const image = await loadImageElement(file);
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  if (!sourceWidth || !sourceHeight) {
+    throw new Error("画像サイズを取得できませんでした。");
+  }
+
+  const scale = Math.min(1, MAX_PHOTO_EDGE / Math.max(sourceWidth, sourceHeight));
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("画像変換用Canvasを作成できませんでした。");
+  }
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (result) => {
+        if (result) resolve(result);
+        else reject(new Error("画像のJPEG変換に失敗しました。"));
+      },
+      "image/jpeg",
+      PHOTO_JPEG_QUALITY,
+    );
+  });
+
+  return { blob, width, height };
+}
+
 export default function DoWorkspacePanel(props: Props) {
   const {
     tenantId,
@@ -832,6 +1094,11 @@ export default function DoWorkspacePanel(props: Props) {
     .ObservationRecord as unknown as ObservationRecordModelClient;
   const observationAbilityLinkModel = client.models
     .ObservationAbilityLink as unknown as ObservationAbilityLinkModelClient;
+  const childModel = client.models.Child as unknown as ChildModelClient;
+  const childClassroomEnrollmentModel = client.models
+    .ChildClassroomEnrollment as unknown as ChildClassroomEnrollmentModelClient;
+  const photoAttachmentModel = client.models
+    .PhotoAttachment as unknown as PhotoAttachmentModelClient;
   const cleanupTranscriptText = client.mutations
     .cleanupTranscriptText as unknown as CleanupTranscriptMutation;
   const analyzeDailyPracticeObservation = client.mutations
@@ -849,6 +1116,16 @@ export default function DoWorkspacePanel(props: Props) {
   const [observationEdits, setObservationEdits] = useState<ObservationEditState>(() =>
     createEmptyObservationEdits(),
   );
+  const [classroomChildren, setClassroomChildren] = useState<ChildRow[]>([]);
+  const [photoDrafts, setPhotoDrafts] = useState<PhotoDraftState>(() =>
+    createEmptyPhotoDrafts(),
+  );
+  const [photoAttachments, setPhotoAttachments] = useState<PhotoAttachmentRow[]>([]);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const [photoProcessingRole, setPhotoProcessingRole] = useState<PracticeRole | null>(null);
+  const [photoUploadingRole, setPhotoUploadingRole] = useState<PracticeRole | null>(null);
+  const [photoArchivingId, setPhotoArchivingId] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [cleanupWorkingRole, setCleanupWorkingRole] = useState<PracticeRole | null>(null);
@@ -1240,6 +1517,149 @@ export default function DoWorkspacePanel(props: Props) {
     tenantId,
   ]);
 
+  const loadClassroomChildrenForPhotos = useCallback(async () => {
+    if (!tenantId || !selectedClassroomId || !targetDate) {
+      setClassroomChildren([]);
+      return;
+    }
+
+    try {
+      const enrollments = await listAll<ChildClassroomEnrollmentRow>(
+        childClassroomEnrollmentModel.list,
+        {
+          filter: {
+            tenantId: { eq: tenantId },
+            classroomId: { eq: selectedClassroomId },
+            fiscalYear: { eq: fiscalYear },
+            status: { eq: "ACTIVE" },
+          },
+        },
+      );
+
+      const effective = enrollments.filter((row) => {
+        const startDate = s(row.startDate);
+        const endDate = s(row.endDate);
+        return (!startDate || startDate <= targetDate) && (!endDate || endDate >= targetDate);
+      });
+
+      const rows = await Promise.all(
+        effective.map(async (enrollment) => {
+          const childId = s(enrollment.childId);
+          if (!childId) return null;
+          const result = await childModel.get({ id: childId });
+          if (result.errors?.length) {
+            throw new Error(errorText(result.errors, "児童情報の取得に失敗しました。"));
+          }
+          return result.data ?? null;
+        }),
+      );
+
+      const active = rows
+        .filter((row): row is ChildRow => Boolean(row?.id))
+        .filter((row) => s(row.status).toUpperCase() === "ACTIVE")
+        .sort((a, b) => s(a.displayName).localeCompare(s(b.displayName), "ja"));
+
+      setClassroomChildren(active);
+      const validIds = new Set(active.map((row) => s(row.id)).filter(Boolean));
+      setPhotoDrafts((current) => ({
+        PRIMARY: {
+          ...current.PRIMARY,
+          selectedChildIds: current.PRIMARY.selectedChildIds.filter((id) => validIds.has(id)),
+        },
+        RESERVE: {
+          ...current.RESERVE,
+          selectedChildIds: current.RESERVE.selectedChildIds.filter((id) => validIds.has(id)),
+        },
+      }));
+    } catch (cause) {
+      console.error(cause);
+      setError(
+        `写真用児童一覧の読み込みエラー: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      );
+      setClassroomChildren([]);
+    }
+  }, [
+    childClassroomEnrollmentModel.list,
+    childModel.get,
+    fiscalYear,
+    selectedClassroomId,
+    targetDate,
+    tenantId,
+  ]);
+
+  const loadPhotoAttachments = useCallback(async () => {
+    if (!tenantId || !selectedDailyPlanId || !selectedClassroomId || !targetDate) {
+      setPhotoAttachments([]);
+      setPhotoUrls({});
+      return;
+    }
+
+    setPhotoLoading(true);
+    try {
+      const rows = await listAll<PhotoAttachmentRow>(photoAttachmentModel.list, {
+        filter: {
+          tenantId: { eq: tenantId },
+          dailyPlanId: { eq: selectedDailyPlanId },
+        },
+      });
+
+      const visible = sortNewest(
+        rows.filter((row) => {
+          const status = s(row.status).toUpperCase();
+          return (
+            s(row.classroomId) === selectedClassroomId &&
+            s(row.targetDate) === targetDate &&
+            status !== "ARCHIVED" &&
+            status !== "DELETED"
+          );
+        }),
+      );
+
+      setPhotoAttachments(visible);
+
+      const urlEntries = await Promise.all(
+        visible
+          .filter((row) => s(row.id) && s(row.storagePath) && s(row.status).toUpperCase() === "ACTIVE")
+          .map(async (row) => {
+            try {
+              const result = await getUrl({
+                path: s(row.storagePath),
+                options: {
+                  expiresIn: 60 * 60,
+                  validateObjectExistence: true,
+                },
+              });
+              return [s(row.id), String(result.url)] as const;
+            } catch (cause) {
+              console.warn("写真URLの取得に失敗しました。", row.id, cause);
+              return [s(row.id), ""] as const;
+            }
+          }),
+      );
+
+      setPhotoUrls(Object.fromEntries(urlEntries));
+    } catch (cause) {
+      console.error(cause);
+      setError(
+        `写真一覧の読み込みエラー: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      );
+      setPhotoAttachments([]);
+      setPhotoUrls({});
+    } finally {
+      setPhotoLoading(false);
+    }
+  }, [
+    photoAttachmentModel.list,
+    selectedClassroomId,
+    selectedDailyPlanId,
+    targetDate,
+    tenantId,
+  ]);
+
   useEffect(() => {
     void loadClassrooms();
   }, [loadClassrooms]);
@@ -1260,11 +1680,37 @@ export default function DoWorkspacePanel(props: Props) {
     void loadDailyReport();
   }, [loadDailyReport]);
 
+  useEffect(() => {
+    void loadClassroomChildrenForPhotos();
+  }, [loadClassroomChildrenForPhotos]);
+
+  useEffect(() => {
+    setPhotoAttachments([]);
+    setPhotoUrls({});
+    setPhotoDrafts((current) => {
+      if (current.PRIMARY.previewUrl) URL.revokeObjectURL(current.PRIMARY.previewUrl);
+      if (current.RESERVE.previewUrl) URL.revokeObjectURL(current.RESERVE.previewUrl);
+      return {
+        PRIMARY: {
+          ...createEmptyPhotoDraft(),
+          inputKey: current.PRIMARY.inputKey + 1,
+        },
+        RESERVE: {
+          ...createEmptyPhotoDraft(),
+          inputKey: current.RESERVE.inputKey + 1,
+        },
+      };
+    });
+    void loadPhotoAttachments();
+  }, [loadPhotoAttachments]);
+
   async function saveDraftCore(options?: {
     silent?: boolean;
     requiredRole?: PracticeRole;
+    allowEmptyTranscript?: boolean;
   }): Promise<PracticeDraftState | null> {
     const silent = options?.silent === true;
+    const allowEmptyTranscript = options?.allowEmptyTranscript === true;
 
     if (!tenantId) {
       setError("tenantId が未取得です。");
@@ -1286,15 +1732,17 @@ export default function DoWorkspacePanel(props: Props) {
       return null;
     }
 
-    const rolesToValidate = options?.requiredRole
-      ? [options.requiredRole]
-      : performedRoles;
-    const emptyRole = rolesToValidate.find(
-      (role) => !practiceDrafts[role].rawTranscriptText.trim(),
-    );
-    if (emptyRole) {
-      setError(`${practiceRoleLabel(emptyRole)}の子どもの様子・実践記録を入力してください。`);
-      return null;
+    if (!allowEmptyTranscript) {
+      const rolesToValidate = options?.requiredRole
+        ? [options.requiredRole]
+        : performedRoles;
+      const emptyRole = rolesToValidate.find(
+        (role) => !practiceDrafts[role].rawTranscriptText.trim(),
+      );
+      if (emptyRole) {
+        setError(`${practiceRoleLabel(emptyRole)}の子どもの様子・実践記録を入力してください。`);
+        return null;
+      }
     }
 
     if (!reportEditable) {
@@ -1321,8 +1769,11 @@ export default function DoWorkspacePanel(props: Props) {
       const combinedTranscript = performedRoles
         .map((role) => {
           const practice = practiceForRole(dailyPlanContent, role);
-          return `【${practiceRoleLabel(role)}：${s(practice?.name) || s(practice?.practiceCode)}】\n${practiceDrafts[role].rawTranscriptText.trim()}`;
+          const transcript = practiceDrafts[role].rawTranscriptText.trim();
+          if (!transcript) return "";
+          return `【${practiceRoleLabel(role)}：${s(practice?.name) || s(practice?.practiceCode)}】\n${transcript}`;
         })
+        .filter(Boolean)
         .join("\n\n");
 
       const existingContent = parseJsonRecord(dailyReport?.contentJson) ?? {};
@@ -2327,6 +2778,782 @@ export default function DoWorkspacePanel(props: Props) {
     }
   }
 
+  function replacePhotoDraft(role: PracticeRole, next: PhotoDraft) {
+    setPhotoDrafts((current) => ({ ...current, [role]: next }));
+  }
+
+  function clearPhotoDraft(role: PracticeRole) {
+    const current = photoDrafts[role];
+    if (current.previewUrl) URL.revokeObjectURL(current.previewUrl);
+    replacePhotoDraft(role, {
+      ...createEmptyPhotoDraft(),
+      inputKey: current.inputKey + 1,
+    });
+  }
+
+  function handlePhotoFileChange(role: PracticeRole, file: File | null) {
+    const current = photoDrafts[role];
+    if (current.previewUrl) URL.revokeObjectURL(current.previewUrl);
+
+    if (!file) {
+      replacePhotoDraft(role, {
+        ...current,
+        file: null,
+        previewUrl: "",
+        progress: 0,
+      });
+      return;
+    }
+
+    if (!looksLikeImageFile(file)) {
+      setError("画像ファイルを選択してください。");
+      replacePhotoDraft(role, {
+        ...current,
+        file: null,
+        previewUrl: "",
+        progress: 0,
+        inputKey: current.inputKey + 1,
+      });
+      return;
+    }
+
+    if (file.size > MAX_PHOTO_SOURCE_BYTES) {
+      setError("元画像は25MB以下にしてください。");
+      replacePhotoDraft(role, {
+        ...current,
+        file: null,
+        previewUrl: "",
+        progress: 0,
+        inputKey: current.inputKey + 1,
+      });
+      return;
+    }
+
+    setError("");
+    replacePhotoDraft(role, {
+      ...current,
+      file,
+      previewUrl: URL.createObjectURL(file),
+      progress: 0,
+    });
+  }
+
+  function togglePhotoChild(role: PracticeRole, childId: string, checked: boolean) {
+    setPhotoDrafts((current) => {
+      const selected = new Set(current[role].selectedChildIds);
+      if (checked) selected.add(childId);
+      else selected.delete(childId);
+
+      const selectedChildIds = [...selected];
+      const selectedEpisodeChildId = selectedChildIds.includes(
+        current[role].selectedEpisodeChildId,
+      )
+        ? current[role].selectedEpisodeChildId
+        : "";
+
+      return {
+        ...current,
+        [role]: {
+          ...current[role],
+          selectedChildIds,
+          selectedEpisodeChildId,
+        },
+      };
+    });
+  }
+
+  async function handleUploadPhoto(role: PracticeRole) {
+    const practice = practiceForRole(dailyPlanContent, role);
+    const draft = photoDrafts[role];
+
+    if (!practice?.practiceCode || !practiceDrafts[role].isPerformed) {
+      setError(`${practiceRoleLabel(role)}を「実際に行った」にしてください。`);
+      return;
+    }
+    if (!reportEditable) {
+      setError("この日報は編集できないため写真を追加できません。");
+      return;
+    }
+
+    const existingPhotoCount = photoAttachments.filter((photo) => {
+      const status = s(photo.status).toUpperCase();
+      return (
+        s(photo.practiceRole).toUpperCase() === role &&
+        ["ACTIVE", "UPLOADING", "ERROR"].includes(status)
+      );
+    }).length;
+
+    if (existingPhotoCount >= MAX_PHOTOS_PER_PRACTICE) {
+      setError(
+        `${practiceRoleLabel(role)}の写真は最大${MAX_PHOTOS_PER_PRACTICE}枚です。追加する場合は、不要な写真をアーカイブしてください。`,
+      );
+      return;
+    }
+
+    if (!draft.file) {
+      setError("写真を選択してください。");
+      return;
+    }
+    if (draft.selectedChildIds.length === 0) {
+      setError("写真に写っている児童を1人以上選択してください。");
+      return;
+    }
+
+    setPhotoProcessingRole(role);
+    setPhotoUploadingRole(null);
+    setError("");
+    setMessage("");
+
+    let photoId = "";
+
+    try {
+      const processed = await resizePhoto(draft.file);
+      const savedDrafts = await saveDraftCore({
+        silent: true,
+        requiredRole: role,
+        allowEmptyTranscript: true,
+      });
+      const savedPractice = savedDrafts?.[role];
+      const dailyPracticeRecordId = s(savedPractice?.record?.id);
+      const dailyReportId = s(savedPractice?.record?.dailyReportId) || s(dailyReport?.id);
+
+      if (!savedPractice || !dailyPracticeRecordId || !dailyReportId || !selectedDailyPlan?.id) {
+        throw new Error("写真保存に必要な日報・Practice記録IDを取得できませんでした。");
+      }
+
+      const savedObservations = await listAll<ObservationRecordRow>(
+        observationRecordModel.list,
+        {
+          filter: {
+            tenantId: { eq: tenantId },
+            dailyPracticeRecordId: { eq: dailyPracticeRecordId },
+          },
+        },
+      );
+      const observationIdByChild = new Map(
+        savedObservations
+          .filter((row) => s(row.id) && s(row.childId))
+          .map((row) => [s(row.childId), s(row.id)] as const),
+      );
+      const childById = new Map(
+        classroomChildren
+          .filter((row) => s(row.id))
+          .map((row) => [s(row.id), row] as const),
+      );
+      const childLinks: PhotoChildLinkSnapshot[] = draft.selectedChildIds
+        .map((childId, index) => {
+          const child = childById.get(childId);
+          if (!child) return null;
+          return {
+            childId,
+            childNameSnapshot: s(child.displayName) || childId,
+            observationRecordId: observationIdByChild.get(childId) ?? "",
+            sortOrder: index + 1,
+          };
+        })
+        .filter((row): row is PhotoChildLinkSnapshot => Boolean(row));
+
+      if (childLinks.length === 0) {
+        throw new Error("選択した児童情報を取得できませんでした。再読み込みしてください。");
+      }
+
+      photoId = randomPhotoId();
+      const storagePath = [
+        "photos",
+        tenantId,
+        String(fiscalYear),
+        selectedClassroomId,
+        targetDate,
+        `${photoId}.jpg`,
+      ].join("/");
+      const nowIso = new Date().toISOString();
+
+      const metadataResult = await photoAttachmentModel.create({
+        id: photoId,
+        tenantId,
+        fiscalYear,
+        classroomId: selectedClassroomId,
+        targetDate,
+        dailyPlanId: s(selectedDailyPlan.id),
+        dailyReportId,
+        dailyPracticeRecordId,
+        practiceRole: role,
+        practiceCode: practice.practiceCode,
+        practiceName: practice.name || practice.practiceCode,
+        storagePath,
+        contentType: "image/jpeg",
+        fileSize: processed.blob.size,
+        width: processed.width,
+        height: processed.height,
+        childLinksJson: JSON.stringify(childLinks),
+        caption: draft.caption.trim() || undefined,
+        takenAt: nowIso,
+        parentVisibility: draft.parentVisibility,
+        status: "UPLOADING",
+        uploadErrorMessage: "",
+        uploadedAt: nowIso,
+        uploadedByUserId: owner,
+        uploadedByName: s(ownerName) || owner,
+        createdByUserId: owner,
+        updatedByUserId: owner,
+      });
+      if (metadataResult.errors?.length || !metadataResult.data) {
+        throw new Error(
+          errorText(metadataResult.errors, "写真メタデータの作成に失敗しました。"),
+        );
+      }
+
+      setPhotoProcessingRole(null);
+      setPhotoUploadingRole(role);
+      setPhotoDrafts((current) => ({
+        ...current,
+        [role]: { ...current[role], progress: 0 },
+      }));
+
+      await uploadData({
+        path: storagePath,
+        data: processed.blob,
+        options: {
+          contentType: "image/jpeg",
+          preventOverwrite: true,
+          checksumAlgorithm: "crc-32",
+          onProgress: ({ transferredBytes, totalBytes }) => {
+            const progress = totalBytes
+              ? Math.min(100, Math.round((transferredBytes / totalBytes) * 100))
+              : 0;
+            setPhotoDrafts((current) => ({
+              ...current,
+              [role]: { ...current[role], progress },
+            }));
+          },
+        },
+      }).result;
+
+      const activateResult = await photoAttachmentModel.update({
+        id: photoId,
+        status: "ACTIVE",
+        uploadErrorMessage: "",
+        updatedByUserId: owner,
+      });
+      if (activateResult.errors?.length) {
+        throw new Error(
+          errorText(activateResult.errors, "写真保存状態の更新に失敗しました。"),
+        );
+      }
+
+      clearPhotoDraft(role);
+      await loadPhotoAttachments();
+      setMessage(
+        `${practiceRoleLabel(role)}の写真を保存しました。` +
+          ` ${processed.width}×${processed.height}px / ${formatFileSize(processed.blob.size)}`,
+      );
+    } catch (cause) {
+      console.error(cause);
+      const errorMessage = cause instanceof Error ? cause.message : String(cause);
+
+      if (photoId) {
+        await photoAttachmentModel.update({
+          id: photoId,
+          status: "ERROR",
+          uploadErrorMessage: errorMessage.slice(0, 4000),
+          updatedByUserId: owner,
+        }).catch(() => undefined);
+      }
+
+      await loadPhotoAttachments().catch(() => undefined);
+      setError(`写真保存エラー: ${errorMessage}`);
+    } finally {
+      setPhotoProcessingRole(null);
+      setPhotoUploadingRole(null);
+    }
+  }
+
+  async function handleArchivePhoto(photo: PhotoAttachmentRow) {
+    const photoId = s(photo.id);
+    if (!photoId) return;
+    if (!reportEditable) {
+      setError("この日報は編集できないため写真をアーカイブできません。");
+      return;
+    }
+
+    setPhotoArchivingId(photoId);
+    setError("");
+    setMessage("");
+    try {
+      const nowIso = new Date().toISOString();
+      const result = await photoAttachmentModel.update({
+        id: photoId,
+        status: "ARCHIVED",
+        archivedAt: nowIso,
+        archivedByUserId: owner,
+        updatedByUserId: owner,
+      });
+      if (result.errors?.length) {
+        throw new Error(errorText(result.errors, "写真のアーカイブに失敗しました。"));
+      }
+      await loadPhotoAttachments();
+      setMessage("写真を日報からアーカイブしました。S3の元画像は削除していません。");
+    } catch (cause) {
+      console.error(cause);
+      setError(
+        `写真アーカイブエラー: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      );
+    } finally {
+      setPhotoArchivingId("");
+    }
+  }
+
+  function renderPhotoSection(
+    role: PracticeRole,
+    practice: PracticeSnapshot,
+    selected: boolean,
+  ) {
+    const draft = photoDrafts[role];
+    const rows = photoAttachments.filter(
+      (photo) => s(photo.practiceRole).toUpperCase() === role,
+    );
+    const photoCount = rows.filter((photo) =>
+      ["ACTIVE", "UPLOADING", "ERROR"].includes(s(photo.status).toUpperCase()),
+    ).length;
+    const photoLimitReached = photoCount >= MAX_PHOTOS_PER_PRACTICE;
+    const busy = photoProcessingRole !== null || photoUploadingRole !== null;
+    const canUpload = selected && reportEditable && !busy && !photoLimitReached;
+    const episodeOptions = observationEdits[role]
+      .filter(
+        (episode) =>
+          draft.selectedChildIds.includes(episode.childId) &&
+          Boolean(episode.episodeText.trim()),
+      )
+      .sort((a, b) => a.childName.localeCompare(b.childName, "ja"));
+
+    return (
+      <section
+        style={{
+          marginTop: 16,
+          padding: 16,
+          border: "1px solid #cbd5e1",
+          borderRadius: 12,
+          background: "#f8fafc",
+          display: "grid",
+          gap: 14,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <strong style={{ display: "block" }}>活動写真</strong>
+            <small style={{ color: "#64748b" }}>
+              長辺1600pxのJPEGへ変換して保存します。変換後の画像には元写真のEXIF・位置情報を引き継ぎません。
+            </small>
+          </div>
+          <span className="status-pill status-draft">
+            写真 {photoCount}/{MAX_PHOTOS_PER_PRACTICE}枚
+          </span>
+        </div>
+
+        {!selected ? (
+          <p className="muted" style={{ margin: 0 }}>
+            写真を追加する場合は、このPracticeを「実際に行った」にしてください。登録済み写真は保持されます。
+          </p>
+        ) : null}
+
+        {photoLimitReached ? (
+          <p
+            style={{
+              margin: 0,
+              padding: 10,
+              border: "1px solid #fed7aa",
+              borderRadius: 8,
+              background: "#fff7ed",
+              color: "#9a3412",
+            }}
+          >
+            このPracticeの写真は最大{MAX_PHOTOS_PER_PRACTICE}枚です。追加する場合は、不要な写真をアーカイブしてください。
+          </p>
+        ) : null}
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: 14,
+            alignItems: "start",
+          }}
+        >
+          <div style={{ display: "grid", gap: 10 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontWeight: 700 }}>カメラで撮影</span>
+                <input
+                  key={`capture-${role}-${draft.inputKey}`}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  disabled={!canUpload}
+                  onChange={(event) => handlePhotoFileChange(role, event.target.files?.[0] ?? null)}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontWeight: 700 }}>写真ライブラリから選択</span>
+                <input
+                  key={`library-${role}-${draft.inputKey}`}
+                  type="file"
+                  accept="image/*"
+                  disabled={!canUpload}
+                  onChange={(event) => handlePhotoFileChange(role, event.target.files?.[0] ?? null)}
+                />
+              </label>
+            </div>
+
+            {draft.previewUrl ? (
+              <img
+                src={draft.previewUrl}
+                alt="アップロード前プレビュー"
+                style={{
+                  width: "100%",
+                  maxHeight: 260,
+                  objectFit: "contain",
+                  borderRadius: 10,
+                  border: "1px solid #cbd5e1",
+                  background: "#fff",
+                }}
+              />
+            ) : null}
+
+            {draft.file ? (
+              <small style={{ color: "#64748b" }}>
+                元画像: {draft.file.name} / {formatFileSize(draft.file.size)}
+              </small>
+            ) : null}
+
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontWeight: 700 }}>子ども別エピソードから選択</span>
+              <select
+                value={draft.selectedEpisodeChildId}
+                disabled={!canUpload || episodeOptions.length === 0}
+                onChange={(event) => {
+                  const childId = event.target.value;
+                  const episode = episodeOptions.find(
+                    (candidate) => candidate.childId === childId,
+                  );
+                  setPhotoDrafts((current) => ({
+                    ...current,
+                    [role]: {
+                      ...current[role],
+                      selectedEpisodeChildId: childId,
+                      caption: episode?.episodeText ?? current[role].caption,
+                    },
+                  }));
+                }}
+              >
+                <option value="">
+                  {episodeOptions.length > 0
+                    ? "エピソードを選択してください"
+                    : draft.selectedChildIds.length === 0
+                      ? "先に写真に写っている児童を選択してください"
+                      : "選択した児童のエピソードはまだありません"}
+                </option>
+                {episodeOptions.map((episode) => (
+                  <option
+                    key={`${role}-photo-episode-${episode.childId}`}
+                    value={episode.childId}
+                  >
+                    {episode.childName}さん｜{episode.episodeText}
+                  </option>
+                ))}
+              </select>
+              <small style={{ color: "#64748b" }}>
+                {practiceDrafts[role].observationSaveStatus === "SAVED"
+                  ? "正式保存済みの子ども別エピソードを表示しています。"
+                  : practiceDrafts[role].analysisStatus === "ANALYZED"
+                    ? "AI解析結果の子ども別エピソードを表示しています。選択後に文章を修正できます。"
+                    : "子ども別・Ability解析後に選択肢が表示されます。解析前は下の欄へ自由入力できます。"}
+              </small>
+            </label>
+
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontWeight: 700 }}>写真の説明</span>
+              <textarea
+                value={draft.caption}
+                disabled={!canUpload}
+                placeholder="例：色水を混ぜながら、色の変化を楽しんでいます。"
+                style={{ minHeight: 80, resize: "vertical" }}
+                onChange={(event) =>
+                  setPhotoDrafts((current) => ({
+                    ...current,
+                    [role]: { ...current[role], caption: event.target.value },
+                  }))
+                }
+              />
+            </label>
+
+            <label
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 8,
+                padding: 10,
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                background: "#fff",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={draft.parentVisibility === "ELIGIBLE"}
+                disabled={!canUpload}
+                onChange={(event) =>
+                  setPhotoDrafts((current) => ({
+                    ...current,
+                    [role]: {
+                      ...current[role],
+                      parentVisibility: event.target.checked ? "ELIGIBLE" : "PRIVATE",
+                    },
+                  }))
+                }
+              />
+              <span>
+                <b>週末こどもだよりの候補にする</b>
+                <small style={{ display: "block", color: "#64748b", marginTop: 2 }}>
+                  候補にしても直ちに保護者へ公開されません。週末だよりで担任が選択し、園長・主任が確認した写真だけを公開します。
+                </small>
+              </span>
+            </label>
+          </div>
+
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <strong>写真に写っている児童</strong>
+              <span style={{ display: "flex", gap: 6 }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!canUpload || classroomChildren.length === 0}
+                  onClick={() =>
+                    setPhotoDrafts((current) => ({
+                      ...current,
+                      [role]: {
+                        ...current[role],
+                        selectedChildIds: classroomChildren.map((child) => s(child.id)).filter(Boolean),
+                      },
+                    }))
+                  }
+                >
+                  全員選択
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!canUpload || draft.selectedChildIds.length === 0}
+                  onClick={() =>
+                    setPhotoDrafts((current) => ({
+                      ...current,
+                      [role]: {
+                        ...current[role],
+                        selectedChildIds: [],
+                        selectedEpisodeChildId: "",
+                      },
+                    }))
+                  }
+                >
+                  選択解除
+                </button>
+              </span>
+            </div>
+
+            {classroomChildren.length > 0 ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                  gap: 8,
+                  maxHeight: 260,
+                  overflow: "auto",
+                  padding: 4,
+                }}
+              >
+                {classroomChildren.map((child) => {
+                  const childId = s(child.id);
+                  const checked = draft.selectedChildIds.includes(childId);
+                  return (
+                    <label
+                      key={`${role}-photo-child-${childId}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: 9,
+                        border: checked ? "2px solid #2563eb" : "1px solid #cbd5e1",
+                        borderRadius: 8,
+                        background: checked ? "#eff6ff" : "#fff",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!canUpload}
+                        onChange={(event) => togglePhotoChild(role, childId, event.target.checked)}
+                      />
+                      <span>{s(child.displayName) || childId}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                対象日の在籍児童を読み込めません。クラスと対象日を確認してください。
+              </p>
+            )}
+
+            <button
+              type="button"
+              disabled={
+                !canUpload ||
+                photoLimitReached ||
+                !draft.file ||
+                draft.selectedChildIds.length === 0 ||
+                photoProcessingRole === role ||
+                photoUploadingRole === role
+              }
+              onClick={() => void handleUploadPhoto(role)}
+            >
+              {photoProcessingRole === role
+                ? "画像を変換中..."
+                : photoUploadingRole === role
+                  ? `アップロード中... ${draft.progress}%`
+                  : "写真を保存"}
+            </button>
+
+            {photoUploadingRole === role ? (
+              <div style={{ display: "grid", gap: 4 }}>
+                <progress value={draft.progress} max={100} style={{ width: "100%" }} />
+                <small>{draft.progress}%</small>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div style={{ borderTop: "1px solid #cbd5e1", paddingTop: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+            <strong>登録済み写真</strong>
+            {photoLoading ? <small>読み込み中...</small> : null}
+          </div>
+
+          {rows.length > 0 ? (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+                gap: 12,
+              }}
+            >
+              {rows.map((photo) => {
+                const photoId = s(photo.id);
+                const links = parsePhotoChildLinks(photo.childLinksJson);
+                const url = photoUrls[photoId] ?? "";
+                const active = s(photo.status).toUpperCase() === "ACTIVE";
+
+                return (
+                  <article
+                    key={photoId}
+                    style={{
+                      padding: 10,
+                      border: "1px solid #cbd5e1",
+                      borderRadius: 10,
+                      background: "#fff",
+                      display: "grid",
+                      gap: 8,
+                    }}
+                  >
+                    {url ? (
+                      <a href={url} target="_blank" rel="noreferrer" title="写真を拡大表示">
+                        <img
+                          src={url}
+                          alt={s(photo.caption) || `${practice.name}の写真`}
+                          loading="lazy"
+                          style={{
+                            width: "100%",
+                            aspectRatio: "4 / 3",
+                            objectFit: "cover",
+                            borderRadius: 8,
+                            border: "1px solid #e2e8f0",
+                            display: "block",
+                          }}
+                        />
+                      </a>
+                    ) : (
+                      <div
+                        style={{
+                          minHeight: 130,
+                          display: "grid",
+                          placeItems: "center",
+                          background: "#f1f5f9",
+                          borderRadius: 8,
+                          color: "#64748b",
+                          textAlign: "center",
+                          padding: 10,
+                        }}
+                      >
+                        {active ? "写真URLを取得できません" : photoStatusLabel(photo.status)}
+                      </div>
+                    )}
+
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <span className={`status-pill status-${active ? "approved" : "draft"}`}>
+                        {photoStatusLabel(photo.status)}
+                      </span>
+                      <span className="status-pill status-draft">
+                        {photoVisibilityLabel(photo.parentVisibility)}
+                      </span>
+                    </div>
+
+                    {s(photo.caption) ? <p style={{ margin: 0 }}>{s(photo.caption)}</p> : null}
+                    <small style={{ color: "#64748b" }}>
+                      児童: {links.length > 0 ? links.map((link) => link.childNameSnapshot).join("、") : "未設定"}
+                    </small>
+                    <small style={{ color: "#64748b" }}>
+                      {photo.width ?? 0}×{photo.height ?? 0}px / {formatFileSize(photo.fileSize)}
+                    </small>
+                    <small style={{ color: "#64748b" }}>
+                      {photo.uploadedAt
+                        ? new Date(photo.uploadedAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })
+                        : "-"}
+                    </small>
+
+                    {s(photo.uploadErrorMessage) ? (
+                      <p className="do-ai-error-text" style={{ margin: 0 }}>
+                        {s(photo.uploadErrorMessage)}
+                      </p>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      className="danger-button"
+                      disabled={!reportEditable || photoArchivingId === photoId}
+                      onClick={() => void handleArchivePhoto(photo)}
+                    >
+                      {photoArchivingId === photoId ? "処理中..." : "日報からアーカイブ"}
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="muted" style={{ margin: 0 }}>このPracticeの写真はまだありません。</p>
+          )}
+        </div>
+      </section>
+    );
+  }
+
   function renderObservationHints(
     role: PracticeRole,
     practice: PracticeSnapshot,
@@ -2799,6 +4026,10 @@ export default function DoWorkspacePanel(props: Props) {
             入力済みの文章は保持されています。「実際に行った」を再度チェックすると表示されます。
           </p>
         ) : null}
+
+        {practice.practiceCode
+          ? renderPhotoSection(role, practice, selected)
+          : null}
       </section>
     );
   }
@@ -2811,7 +4042,7 @@ export default function DoWorkspacePanel(props: Props) {
           <p className="eyebrow">Do / Daily Report</p>
           <h2>今日の日案</h2>
           <p className="muted">
-            発行済み日案を確認し、Practice別に音声入力、必須クリーンアップ、子ども別・Ability解析、観察記録保存を行います。
+            発行済み日案を確認し、Practice別に写真、音声入力、必須クリーンアップ、子ども別・Ability解析、観察記録保存を行います。
           </p>
         </div>
         <span className={`status-pill status-${statusClass(dailyReport?.status)}`}>
@@ -2962,7 +4193,7 @@ export default function DoWorkspacePanel(props: Props) {
               <div>
                 <h3>子どもの様子・実践記録</h3>
                 <p className="muted">
-                  実施したPracticeごとに音声入力し、AIクリーンアップと子ども別・Ability解析を行い、解析結果を正式な観察記録として保存します。
+                  実施したPracticeごとに写真と音声記録を残し、AIクリーンアップと子ども別・Ability解析を行い、解析結果を正式な観察記録として保存します。
                 </p>
               </div>
               <span className={`status-pill status-${statusClass(dailyReport?.status)}`}>
