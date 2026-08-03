@@ -1054,25 +1054,38 @@ function buildDailyObservationHints(args: {
     }
   }
 
-  const links = Array.from(bestLinkByAbilityCode.values()).sort((a, b) => {
-    const scoreDiff = Math.max(1, n(b.score, 1)) - Math.max(1, n(a.score, 1));
-    if (scoreDiff !== 0) return scoreDiff;
-    return s(a.abilityCode).localeCompare(s(b.abilityCode));
-  });
-
-  const candidateRows = links
+  const candidateRows = Array.from(bestLinkByAbilityCode.values())
     .map((link) => {
       const abilityCode = s(link.abilityCode);
       const postureCode = postureCodeFromAbilityCode(abilityCode);
-      const hints = abilityHintsForCode(abilityCode, args.ageYears, args.observationHints);
+      const hints = abilityHintsForCode(
+        abilityCode,
+        args.ageYears,
+        args.observationHints,
+      );
+      const startingAge = Math.max(
+        0,
+        ...hints.map((hint) => n(hint.startingAge)),
+      );
+
       return {
         abilityCode,
         postureCode,
         score: Math.max(1, n(link.score, 1)),
+        startingAge,
         hints,
       };
     })
-    .filter((row) => row.hints.length > 0);
+    .filter((row) => row.hints.length > 0)
+    .sort((a, b) => {
+      const ageDiff = b.startingAge - a.startingAge;
+      if (ageDiff !== 0) return ageDiff;
+
+      const scoreDiff = b.score - a.score;
+      if (scoreDiff !== 0) return scoreDiff;
+
+      return a.abilityCode.localeCompare(b.abilityCode);
+    });
 
   const maxCount = Math.max(1, args.maxCount ?? DAILY_OBSERVATION_HINT_LIMIT);
   const selected: typeof candidateRows = [];
@@ -3708,7 +3721,7 @@ export default function PlanWorkspacePanel(props: Props) {
           maxAbilityCountPerPractice: DAILY_OBSERVATION_HINT_LIMIT,
           ageRule: "startingAge <= classroomAgeYears; prefer nearest startingAge",
           episodeSelection: "episode1 / episode2 / episode3 are selected independently by stable hash",
-          abilitySelection: "score priority with posture diversification",
+          abilitySelection: "nearest startingAge priority with posture diversification; score used as same-age tie-breaker",
           practiceScope: "PRIMARY_AND_RESERVE_SEPARATE",
           reservePracticeIncluded: Boolean(reservePracticeCode),
         },
@@ -4509,7 +4522,7 @@ export default function PlanWorkspacePanel(props: Props) {
             承認済み週案だけを日案発行対象にします。主活動Practiceと予備Practiceのそれぞれから、別々に「見届けたい子どもの姿」を作成します。
           </span>
           <span>
-            AbilityObservationHintは対象年齢以下を使い、scoreが高いAbilityを優先しつつ、同じ10の姿に偏りすぎないようPracticeごとに最大4件へ絞ります。
+            AbilityObservationHintは対象年齢以下を使い、対象年齢に近いAbilityを優先しつつ、同じ10の姿に偏りすぎないようPracticeごとに最大4件へ絞ります。
           </span>
         </div>
 

@@ -423,7 +423,7 @@ function createEmptyPhotoDraft(): PhotoDraft {
     caption: "",
     selectedChildIds: [],
     selectedEpisodeChildId: "",
-    parentVisibility: "PRIVATE",
+    parentVisibility: "ELIGIBLE",
     progress: 0,
     inputKey: 0,
   };

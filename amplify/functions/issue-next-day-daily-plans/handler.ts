@@ -517,25 +517,38 @@ function buildDailyObservationHints(args: {
     }
   }
 
-  const links = Array.from(bestLinkByAbilityCode.values()).sort((a, b) => {
-    const scoreDiff = Math.max(1, n(b.score, 1)) - Math.max(1, n(a.score, 1));
-    if (scoreDiff !== 0) return scoreDiff;
-    return s(a.abilityCode).localeCompare(s(b.abilityCode));
-  });
-
-  const candidateRows = links
+  const candidateRows = Array.from(bestLinkByAbilityCode.values())
     .map((link) => {
       const abilityCode = s(link.abilityCode);
       const postureCode = postureCodeFromAbilityCode(abilityCode);
-      const hints = abilityHintsForCode(abilityCode, args.ageYears, args.observationHints);
+      const hints = abilityHintsForCode(
+        abilityCode,
+        args.ageYears,
+        args.observationHints,
+      );
+      const startingAge = Math.max(
+        0,
+        ...hints.map((hint) => n(hint.startingAge)),
+      );
+
       return {
         abilityCode,
         postureCode,
         score: Math.max(1, n(link.score, 1)),
+        startingAge,
         hints,
       };
     })
-    .filter((row) => row.hints.length > 0);
+    .filter((row) => row.hints.length > 0)
+    .sort((a, b) => {
+      const ageDiff = b.startingAge - a.startingAge;
+      if (ageDiff !== 0) return ageDiff;
+
+      const scoreDiff = b.score - a.score;
+      if (scoreDiff !== 0) return scoreDiff;
+
+      return a.abilityCode.localeCompare(b.abilityCode);
+    });
 
   const maxCount = Math.max(1, args.maxCount ?? DAILY_OBSERVATION_HINT_LIMIT);
   const selected: typeof candidateRows = [];
@@ -582,6 +595,26 @@ function buildDailyObservationHints(args: {
       },
     };
   });
+}
+
+function uniqueDailyObservationHints(
+  rows: DailyObservationHintRow[],
+  maxCount = DAILY_OBSERVATION_HINT_LIMIT,
+): DailyObservationHintRow[] {
+  const seenAbility = new Set<string>();
+  const result: DailyObservationHintRow[] = [];
+
+  for (const row of rows) {
+    const key = s(row.abilityCode) || `${s(row.postureCode)}-${s(row.abilityName)}`;
+    if (!key || seenAbility.has(key)) continue;
+
+    seenAbility.add(key);
+    result.push(row);
+
+    if (result.length >= maxCount) break;
+  }
+
+  return result;
 }
 
 function practiceByCodeMap(practices: PracticeCodeRow[]): Map<string, PracticeCodeRow> {
@@ -677,7 +710,7 @@ function buildDailyPlanContent(args: {
       maxAbilityCountPerPractice: DAILY_OBSERVATION_HINT_LIMIT,
       ageRule: "startingAge <= classroomAgeYears; prefer nearest startingAge",
       episodeSelection: "episode1 / episode2 / episode3 are selected independently by stable hash",
-      abilitySelection: "score priority with posture diversification",
+      abilitySelection: "nearest startingAge priority with posture diversification; score used as same-age tie-breaker",
       practiceScope: "PRIMARY_AND_RESERVE_SEPARATE",
       reservePracticeIncluded: Boolean(reservePracticeCode),
     },
@@ -783,24 +816,30 @@ export const handler = async (event: ScheduledEventLike = {}): Promise<IssueSumm
       const primaryPractice = practiceMap.get(primaryPracticeCode) ?? null;
       const reservePractice = practiceMap.get(s(day.reservePracticeCode)) ?? null;
       const sourceImpactIds = sourceImpactAnalysisIds(weeklyPlan.sourceImpactAnalysisIdsJson);
-      const primaryObservationHints = buildDailyObservationHints({
-        targetDate,
-        classroomId: s(weeklyPlan.classroomId),
-        ageYears: n(weeklyContent.ageYears),
-        practiceCode: primaryPracticeCode,
-        linksByPracticeCode,
-        observationHints,
-        maxCount: DAILY_OBSERVATION_HINT_LIMIT,
-      });
-      const reserveObservationHints = buildDailyObservationHints({
-        targetDate,
-        classroomId: s(weeklyPlan.classroomId),
-        ageYears: n(weeklyContent.ageYears),
-        practiceCode: s(day.reservePracticeCode),
-        linksByPracticeCode,
-        observationHints,
-        maxCount: DAILY_OBSERVATION_HINT_LIMIT,
-      });
+      const primaryObservationHints = uniqueDailyObservationHints(
+        buildDailyObservationHints({
+          targetDate,
+          classroomId: s(weeklyPlan.classroomId),
+          ageYears: n(weeklyContent.ageYears),
+          practiceCode: primaryPracticeCode,
+          linksByPracticeCode,
+          observationHints,
+          maxCount: DAILY_OBSERVATION_HINT_LIMIT,
+        }),
+        DAILY_OBSERVATION_HINT_LIMIT,
+      );
+      const reserveObservationHints = uniqueDailyObservationHints(
+        buildDailyObservationHints({
+          targetDate,
+          classroomId: s(weeklyPlan.classroomId),
+          ageYears: n(weeklyContent.ageYears),
+          practiceCode: s(day.reservePracticeCode),
+          linksByPracticeCode,
+          observationHints,
+          maxCount: DAILY_OBSERVATION_HINT_LIMIT,
+        }),
+        DAILY_OBSERVATION_HINT_LIMIT,
+      );
 
       const content = buildDailyPlanContent({
         weeklyPlan,
